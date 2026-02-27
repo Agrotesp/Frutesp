@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+m<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -829,8 +829,7 @@ function renderTickets(f){
     </div>`;
   }).join('');
 }
-function updateBadge(){const c=getVis().filter(t=>t.status==='OPEN').length;const b=document.getElementById('nav-badge');b.textContent=c;b.style.display=c>0?'flex':'none';}
-(){const c=getVis().filter(t=>t.status==='OPEN').length;const b=document.getElementById('nav-badge');b.textContent=c;b.style.display=c>0?'flex':'none';}
+function updateBadge(){const c=getVis().filter(t=>t.status==='OPEN').length;const b=document.getElementById('nav-badge');if(!b)return;b.textContent=c;b.style.display=c>0?'flex':'none';}
 
 /* DETAIL */
 function openDetail(id){
@@ -871,7 +870,6 @@ function openDetail(id){
   ov.style.display='flex';ov.scrollTop=0;
 }
 function closeDetail(){document.getElementById('ticket-detail-overlay').style.display='none';curTicket=null;}
-(){document.getElementById('ticket-detail-overlay').style.display='none';curTicket=null;}
 function renderTChat(t){const el=document.getElementById('ticket-chat-msgs');el.innerHTML=t.chat&&t.chat.length?t.chat.map(m=>{const mine=m.userId===CU.id;return`<div class="chat-msg ${mine?'mine':'other'}"><div class="chat-bubble">${esc(m.msg)}</div><div class="chat-meta">${m.userName} · ${fmtTime(m.ts)}</div></div>`;}).join(''):'<p style="color:var(--text-3);font-size:13px;text-align:center;padding:16px;">Nenhuma mensagem ainda.</p>';el.scrollTop=el.scrollHeight;}
 function sendTicketMsg(){const inp=document.getElementById('ticket-chat-input');const msg=inp.value.trim();if(!msg||!curTicket)return;const t=tickets.find(x=>x.id===curTicket);if(!t.chat)t.chat=[];t.chat.push({userId:CU.id,userName:CU.nome,msg,ts:Date.now()});inp.value='';renderTChat(t);save();}
 function renderTHistory(t){document.getElementById('ticket-history').innerHTML=(t.history||[]).slice().reverse().map(h=>{const u=users.find(x=>x.id===h.usuario);return`<div class="log-item"><div class="log-dot"></div><div class="log-content"><div class="log-action">${h.acao}</div>${h.de?`<div class="log-detail">${h.de} → ${h.para}</div>`:''}<div class="log-time">${u?u.nome:'–'} · ${fmtDate(h.ts)}</div></div></div>`;}).join('');}
@@ -893,7 +891,7 @@ function openModalTicket(){
   if(document.getElementById('nt-maquina-parada')) document.getElementById('nt-maquina-parada').value='nao';
   onTipoOcorrenciaChange();
   openModal('modal-ticket');
-});openModal('modal-ticket');}
+}
 function submitTicket(){
   const titulo=document.getElementById('nt-titulo').value.trim();
   if(!titulo){toast('Informe o título!');return;}
