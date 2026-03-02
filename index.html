@@ -1531,7 +1531,8 @@ function renderTkList(list){
     const pct=Math.min(100,Math.round((Date.now()-t.criadoEm)/tot*100));
     const tipoBadge=t.tipoProb==='maquina_defeito'?'<span class="badge b-tipo">🔧</span>':
       t.tipoProb==='produto_necessario'?'<span class="badge b-tipo">📦</span>':
-      t.tipoProb==='equipamento_necessario'?'<span class="badge b-tipo">🔧📦</span>':'';
+      t.tipoProb==='equipamento_necessario'?'<span class="badge b-tipo">🔧📦</span>':
+      t.tipoProb==='material_faltando'?'<span class="badge b-tipo">🧱</span>':'';
     // Alerta crítico de envelhecimento — só Gestor vê
     const isGestor=(perf()==='Gestor');
     const alertaCritico=(isGestor&&lv>=3&&t.status!=='DONE'&&t.status!=='CANCELED')
@@ -1681,6 +1682,7 @@ function openDet(id){
   document.getElementById('d-tipo').textContent={
     equipamento_necessario:'⚙️ Equipamento necessário',
     produto_necessario:'📦 Produto necessário',
+    material_faltando:'🧱 Material faltando (almoxarifado)',
     maquina_defeito:'🔧 Equipamento/Máquina com defeito'}[t.tipoProb]||'–';
   document.getElementById('d-pri').innerHTML=`<span class="badge bp-${t.prioridade}">${t.prioridade}</span>`;
   document.getElementById('d-set').textContent=t.setor;
@@ -1700,7 +1702,7 @@ function openDet(id){
   }else secMaq.style.display='none';
 
   const secMat=document.getElementById('d-sec-mat');
-  if((t.tipoProb==='produto_necessario'||t.tipoProb==='equipamento_necessario')&&t.materiais&&t.materiais.length){
+  if((t.tipoProb==='produto_necessario'||t.tipoProb==='equipamento_necessario'||t.tipoProb==='material_faltando')&&t.materiais&&t.materiais.length){
     secMat.style.display='';
     document.getElementById('d-mat').innerHTML=t.materiais.map(m=>
       `<div class="dr"><span class="drl">${m.nome}</span><span class="drv">${m.qtd||'–'}</span></div>`
@@ -1744,6 +1746,7 @@ function renderTkHist(t){
       <div style="flex:1">
         <div class="log-act">${h.acao}</div>
         ${h.de?`<div class="log-det">${h.de} → ${h.para}</div>`:''}
+        ${h.obs?`<div class="log-det" style="color:var(--t2);margin-top:2px">📝 ${esc(h.obs)}</div>`:''}
         <div class="log-t">${u?u.nome:'–'} · ${fmtDate(h.ts)}</div>
       </div></div>`;
   }).join('');
@@ -2024,6 +2027,82 @@ function gerarRelatorio(){
   const prios=['critica','alta','media','baixa'];
   const agingColors=['#2EB87F','#4A9EE8','#D4B840','#E8934A','#E85555'];
 
+
+  // Detalhamento dos chamados (descrição + histórico com observações)
+  const details=all.slice().sort((a,b)=>b.criadoEm-a.criadoEm).map(t=>{
+    const d=dias(t.criadoEm);
+    const res=users.find(u=>u.id===t.responsavel);
+    const sol=users.find(u=>u.id===t.criadoPor);
+    const tipo={
+      equipamento_necessario:'⚙️ Equipamento necessário',
+      produto_necessario:'📦 Produto necessário',
+      material_faltando:'🧱 Material faltando (almoxarifado)',
+      maquina_defeito:'🔧 Equipamento/Máquina com defeito'
+    }[t.tipoProb]||'–';
+    const extra=(()=>{
+      if(t.tipoProb==='maquina_defeito'){
+        return `<div style="margin-top:8px;color:#355b46">
+          <div><strong>Equipamento:</strong> ${esc(t.equipProb||'–')}</div>
+          <div><strong>Falha:</strong> ${esc(t.falha||'–')}</div>
+          ${t.componentes?`<div><strong>Peças/Componentes:</strong> ${esc(t.componentes)}</div>`:''}
+        </div>`;
+      }
+      if((t.tipoProb==='produto_necessario'||t.tipoProb==='equipamento_necessario'||t.tipoProb==='material_faltando') && Array.isArray(t.materiais) && t.materiais.length){
+        return `<div style="margin-top:8px">
+          <div style="font-weight:800;color:#0F2E20;margin-bottom:6px">Itens solicitados</div>
+          <table>
+            <tr><th>Item</th><th>Qtd</th></tr>
+            ${t.materiais.map(m=>`<tr><td>${esc(m.nome||'')}</td><td>${esc(m.qtd||'')}</td></tr>`).join('')}
+          </table>
+        </div>`;
+      }
+      return '';
+    })();
+    const histRows=(t.history||[]).slice().reverse().map(h=>{
+      const u=users.find(x=>x.id===h.usuario);
+      return `<tr>
+        <td>${fmtDate(h.ts)}</td>
+        <td>${esc(u?u.nome:'–')}</td>
+        <td>${esc(h.acao||'')}</td>
+        <td>${h.de?esc(h.de+' → '+h.para):''}</td>
+        <td>${h.obs?esc(h.obs):''}</td>
+      </tr>`;
+    }).join('');
+    return `<div class="tkblk">
+      <div class="tkh">
+        <div class="tkh-l">
+          <div class="tkp">${t.proto} · ${esc(t.setor)} · ${stLbl(t.status)}</div>
+          <div class="tkt">${esc(t.titulo)}</div>
+          <div class="tkm">Aberto em ${fmtDate(t.criadoEm)} · ${d} dia(s) · SLA ${fmtDate(t.slaDeadline)} ${isSLAVen(t)?'(vencido)':''}</div>
+        </div>
+        <div class="tkh-r">
+          <div class="pri p${t.prioridade[0]}">${esc(t.prioridade)}</div>
+        </div>
+      </div>
+      <div class="tkgrid">
+        <div><strong>Categoria:</strong> ${esc(t.categoria||'–')}</div>
+        <div><strong>Tipo:</strong> ${tipo}</div>
+        <div><strong>Local:</strong> ${esc(t.local||'–')}</div>
+        <div><strong>Impacto:</strong> ${esc(t.impacto||'–')}</div>
+        <div><strong>Parada:</strong> ${(t.parada||0)} min</div>
+        <div><strong>Responsável:</strong> ${esc(res?res.nome:'Não atribuído')}</div>
+        <div><strong>Solicitante:</strong> ${esc(sol?sol.nome:'–')}</div>
+      </div>
+      <div style="margin-top:10px">
+        <div style="font-weight:800;color:#0F2E20;margin-bottom:6px">Descrição / Explicação</div>
+        <div class="tkdesc">${esc(t.descricao||'Sem descrição.')}</div>
+      </div>
+      ${extra}
+      <div style="margin-top:10px">
+        <div style="font-weight:800;color:#0F2E20;margin-bottom:6px">Histórico (com observações)</div>
+        <table>
+          <tr><th>Data</th><th>Usuário</th><th>Ação</th><th>Etapa</th><th>Observação</th></tr>
+          ${histRows||`<tr><td colspan="5">—</td></tr>`}
+        </table>
+      </div>
+    </div>`;
+  }).join('');
+
   const html=`<style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:'Plus Jakarta Sans',Arial,sans-serif;color:#1a2a1f;font-size:12px;background:#fff;padding:0}
@@ -2059,6 +2138,18 @@ function gerarRelatorio(){
     .aging-bar-f{height:100%;border-radius:4px}
     .aging-lbl{width:90px;font-size:10.5px;color:#6b8a74}
     .aging-cnt{width:28px;text-align:right;font-weight:800;font-size:11px}
+    .tkblk{border:1px solid #d0e4da;border-radius:8px;padding:14px 14px 10px;margin:12px 0;page-break-inside:avoid}
+    .tkh{display:flex;justify-content:space-between;gap:12px;margin-bottom:10px}
+    .tkp{font-family:monospace;font-size:11px;color:#6b8a74}
+    .tkt{font-size:14px;font-weight:800;color:#0F2E20;margin-top:2px}
+    .tkm{font-size:10.5px;color:#8aaa94;margin-top:3px;line-height:1.4}
+    .pri{font-weight:900;text-transform:uppercase;font-size:10px;padding:6px 8px;border-radius:8px;border:1px solid #d0e4da}
+    .pri.pc{border-color:#E85555;color:#E85555;background:#fdf3f3}
+    .pri.pa{border-color:#E8934A;color:#E8934A;background:#fdf7f0}
+    .pri.pm{border-color:#D4B840;color:#7b6a00;background:#fffbe8}
+    .pri.pb{border-color:#4A9EE8;color:#4A9EE8;background:#f0f7fd}
+    .tkgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;font-size:11px;color:#355b46}
+    .tkdesc{background:#f8fbf9;border:1px solid #e8f0eb;border-radius:6px;padding:10px;line-height:1.55;color:#1a2a1f}
     .ft{margin-top:32px;padding-top:14px;border-top:1px solid #d0e4da;
       display:flex;justify-content:space-between;font-size:10px;color:#aaa}
   </style>
@@ -2151,6 +2242,9 @@ function gerarRelatorio(){
         <td>${d.proximaManutencao||'–'}</td></tr>`).join('')}
     </table>`:''}
 
+    <div class="stt">Detalhamento dos Chamados</div>
+    ${details}
+
     <div class="ft">
       <span>FRUTESP — Gestão Operacional</span>
       <span>Relatório gerado em ${now.toLocaleString('pt-BR')}</span>
@@ -2177,6 +2271,8 @@ document.querySelectorAll('.mbg').forEach(m=>{
 /* ════════════════════════════════════
    UTILS
 ════════════════════════════════════ */
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));}
+
 function fmtDate(ts){return new Date(ts).toLocaleDateString('pt-BR',
   {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});}
 function fmtTime(ts){return new Date(ts).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
