@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>FRUTESP — Chamados Operacionais</title>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <style>
 :root{
   --g950:#040e09;--g900:#071510;--g850:#0a1d14;--g800:#0d2419;
@@ -273,7 +275,7 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
     <!-- PAINEL GESTOR -->
     <div id="page-dashboard" class="page active">
       <div class="ph"><h2>Painel do Gestor</h2>
-        <button class="btn bg bsm" onclick="exportCSV()" title="Exportar relatório CSV">⬇️ Exportar</button>
+        <button class="btn bg bsm" onclick="exportPDF()" title="Exportar relatório PDF">⬇️ Exportar PDF</button>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
         <div style="display:flex;align-items:center;gap=6px;background:rgba(69,177,117,.12);border:1px solid rgba(69,177,117,.3);border-radius:20px;padding:5px 12px;font-size:12px;font-weight:700;color:#45b175;gap:5px">🟢 0–2 dias <span style="font-weight:400;color:var(--t4)">Em dia</span></div>
@@ -831,39 +833,159 @@ function closeM(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.mbg').forEach(m=>
   m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');}));
 
-/* ═══ EXPORT CSV ═══ */
-function exportCSV(){
-  const cols=['Protocolo','Título','Setor','Tipo','Status','Solicitante','Responsável(is)','Data de Abertura','Dias em Aberto','Último Andamento','Data do Último Andamento'];
+/* ═══ EXPORT PDF ═══ */
+function exportPDF(){
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+  const pw=doc.internal.pageSize.getWidth();
+  const today=new Date();
+  const todayStr=today.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  const todayFile=today.toISOString().slice(0,10);
+
+  // ── CABEÇALHO ──
+  doc.setFillColor(13,36,25);
+  doc.rect(0,0,pw,28,'F');
+
+  // Logo texto
+  doc.setFont('helvetica','bold');
+  doc.setFontSize(26);
+  doc.setTextColor(69,177,117);
+  doc.text('FRUTE',14,18);
+  doc.setTextColor(255,255,255);
+  doc.text('SP',48,18);
+
+  // Subtítulo
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(9);
+  doc.setTextColor(163,204,183);
+  doc.text('Sistema de Chamados Operacionais',14,23);
+
+  // Título do relatório
+  doc.setFont('helvetica','bold');
+  doc.setFontSize(13);
+  doc.setTextColor(255,255,255);
+  doc.text('Relatório de Chamados',pw/2,13,{align:'center'});
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(163,204,183);
+  doc.text(`Gerado em ${todayStr}`,pw/2,19,{align:'center'});
+
+  // Stats no cabeçalho
+  const total=tickets.length;
+  const abertos=tickets.filter(t=>t.status!=='finalizado').length;
+  const criticos=tickets.filter(t=>t.status!=='finalizado'&&dias(t.criadoEm)>=7).length;
+  const stats=[
+    {lbl:'Total de Chamados',val:String(total)},
+    {lbl:'Em Aberto',val:String(abertos)},
+    {lbl:'Críticos (7+ dias)',val:String(criticos)},
+  ];
+  let sx=pw-14;
+  stats.slice().reverse().forEach(s=>{
+    const tw=doc.getTextWidth(s.val)+doc.getTextWidth(s.lbl)+8;
+    sx-=tw+4;
+    doc.setFont('helvetica','bold');doc.setFontSize(13);doc.setTextColor(69,177,117);
+    doc.text(s.val,sx,13);
+    doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.setTextColor(163,204,183);
+    doc.text(s.lbl,sx,19);
+  });
+
+  // ── TABELA ──
+  const cols=[
+    {header:'Protocolo',dataKey:'proto'},
+    {header:'Título',dataKey:'titulo'},
+    {header:'Setor',dataKey:'setor'},
+    {header:'Tipo',dataKey:'tipo'},
+    {header:'Status',dataKey:'status'},
+    {header:'Solicitante',dataKey:'sol'},
+    {header:'Responsável(is)',dataKey:'resp'},
+    {header:'Abertura',dataKey:'abert'},
+    {header:'Dias',dataKey:'dias'},
+    {header:'Último Andamento',dataKey:'ultimo'},
+  ];
+
   const rows=tickets.map(t=>{
     const d=dias(t.criadoEm);
     const lastH=t.history&&t.history.length?t.history[t.history.length-1]:null;
-    const lastSt=lastH?stOf(lastH.status).lbl:'—';
-    const lastDt=lastH?fmtDT(lastH.ts):'—';
-    const row=[
-      t.proto,
-      t.titulo,
-      t.setor,
-      TIPOS[t.tipo]||t.tipo,
-      stOf(t.status).lbl,
-      t.criadoNome||'—',
-      t.responsavel||'Não atribuído',
-      fmtDT(t.criadoEm),
-      d,
-      lastSt,
-      lastDt,
-    ];
-    return row.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(';');
+    return{
+      proto:t.proto,
+      titulo:t.titulo,
+      setor:t.setor,
+      tipo:(TIPOS[t.tipo]||t.tipo).replace(/[^\x00-\x7F]/g,'').trim(),
+      status:stOf(t.status).lbl,
+      sol:t.criadoNome||'—',
+      resp:t.responsavel||'Não atribuído',
+      abert:fmtD(t.criadoEm),
+      dias:String(d)+'d',
+      ultimo:lastH?`${stOf(lastH.status).lbl}\n${fmtDT(lastH.ts)}`:'—',
+      _d:d,
+      _status:t.status,
+    };
   });
-  const bom='\uFEFF';
-  const csv=bom+[cols.map(c=>`"${c}"`).join(';'),...rows].join('\n');
-  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  const today=new Date().toISOString().slice(0,10);
-  a.href=url;a.download=`relatorio-chamados-${today}.csv`;
-  document.body.appendChild(a);a.click();
-  document.body.removeChild(a);URL.revokeObjectURL(url);
-  showToast('✅ Relatório exportado!');
+
+  // Cor do status
+  const statusColors={
+    aberto:[69,177,117],
+    analise:[74,158,232],
+    andamento:[180,155,40],
+    compra:[155,114,232],
+    aguardando:[200,120,60],
+    finalizado:[92,145,120],
+  };
+
+  doc.autoTable({
+    startY:32,
+    columns:cols,
+    body:rows,
+    theme:'grid',
+    styles:{font:'helvetica',fontSize:8,cellPadding:{top:3,bottom:3,left:3,right:3},overflow:'linebreak',textColor:[30,50,40],lineColor:[220,220,220],lineWidth:0.2},
+    headStyles:{fillColor:[13,36,25],textColor:[255,255,255],fontStyle:'bold',fontSize:8.5,halign:'center'},
+    alternateRowStyles:{fillColor:[245,250,247]},
+    columnStyles:{
+      proto:{fontStyle:'bold',cellWidth:22,textColor:[42,112,73]},
+      titulo:{cellWidth:42},
+      setor:{cellWidth:22,halign:'center'},
+      tipo:{cellWidth:28},
+      status:{cellWidth:28,halign:'center'},
+      sol:{cellWidth:24},
+      resp:{cellWidth:30},
+      abert:{cellWidth:22,halign:'center',fontSize:7.5},
+      dias:{cellWidth:12,halign:'center',fontStyle:'bold'},
+      ultimo:{cellWidth:36,fontSize:7.5},
+    },
+    willDrawCell(data){
+      if(data.section==='body'){
+        // Colorir coluna Dias
+        if(data.column.dataKey==='dias'){
+          const d=rows[data.row.index]._d;
+          const c=d>=7?[192,57,43]:d>=3?[184,134,11]:[42,112,73];
+          doc.setTextColor(...c);
+        }
+        // Colorir coluna Status
+        if(data.column.dataKey==='status'){
+          const sid=tickets[data.row.index]?.status;
+          const c=statusColors[sid]||[60,80,70];
+          doc.setTextColor(...c);
+        }
+      }
+    },
+    didDrawPage(data){
+      // Rodapé
+      const pageCount=doc.internal.getNumberOfPages();
+      const cur=doc.internal.getCurrentPageInfo().pageNumber;
+      doc.setFont('helvetica','normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(150,150,150);
+      doc.text(`Página ${cur} de ${pageCount}`,pw-14,doc.internal.pageSize.getHeight()-6,{align:'right'});
+      doc.text(`Gerado em ${todayStr} — FRUTESP Sistema de Chamados`,14,doc.internal.pageSize.getHeight()-6);
+      // linha rodapé
+      doc.setDrawColor(200,200,200);
+      doc.setLineWidth(0.3);
+      doc.line(14,doc.internal.pageSize.getHeight()-9,pw-14,doc.internal.pageSize.getHeight()-9);
+    },
+  });
+
+  doc.save(`relatorio-chamados-${todayFile}.pdf`);
+  showToast('✅ Relatório PDF exportado!');
 }
 
 /* ═══ TOAST ═══ */
