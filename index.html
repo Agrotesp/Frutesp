@@ -251,16 +251,10 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
         <input type="email" id="re" placeholder="seu@email.com"></div>
       <div class="fg"><label>Senha</label>
         <input type="password" id="rs" placeholder="Mínimo 6 caracteres"></div>
-      <div class="fg"><label>Perfil</label>
-        <select id="rp">
-          <option value="Solicitante">📋 Solicitante — Abre chamados</option>
-          <option value="Administrativo">🎯 Administrativo — Gerencia chamados</option>
-          <option value="Gestor">👔 Gestor — Painel completo</option>
-        </select></div>
       <div class="fg"><label>Setor</label>
         <select id="rst">
           <option>Campo</option><option>Irrigação</option><option>Mecânica</option>
-          <option>Packing House</option><option>Administração</option><option>Outros</option>
+          <option>Packing House</option><option>Almoxarifado</option>
         </select></div>
       <button class="btn bp" onclick="doReg()" style="margin-top:6px">Criar Conta</button>
     </div>
@@ -378,7 +372,7 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
       <select id="nset">
         <option value="">— Selecione o setor —</option>
         <option>Campo</option><option>Irrigação</option><option>Mecânica</option>
-        <option>Packing House</option><option>Administração</option><option>Outros</option>
+        <option>Packing House</option><option>Almoxarifado</option>
       </select></div>
     <div class="fg"><label>Tipo de chamado *</label>
       <select id="ntip">
@@ -387,12 +381,12 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
         <option value="equipamento_necessario">⚙️ Equipamento necessário</option>
         <option value="produto_necessario">📦 Produto / Material necessário</option>
         <option value="servico">🛠 Serviço / Manutenção</option>
-        <option value="administrativo">📋 Administrativo / Outro</option>
       </select></div>
     <div class="fg"><label>Descrição</label>
       <textarea id="ndesc" placeholder="Descreva o problema ou necessidade..."></textarea></div>
-    <div class="fg"><label>Responsável administrativo</label>
-      <select id="nresp"><option value="">— Não atribuído —</option></select></div>
+    <div class="fg"><label>Responsável(is) administrativo(s)</label>
+      <div id="nresp-list" style="display:flex;flex-direction:column;gap:6px;background:var(--g900);border:1.5px solid var(--b2);border-radius:var(--rs);padding:10px 12px;max-height:160px;overflow-y:auto"></div>
+    </div>
     <div style="display:flex;gap:10px;margin-top:14px">
       <button class="btn bg" style="flex:1" onclick="closeM('mticket')">Cancelar</button>
       <button class="btn bp" style="flex:2" onclick="submitTk()">Abrir Chamado</button>
@@ -437,7 +431,7 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
 
 <script>
 /* ═══ CONSTANTS ═══ */
-const SETORES=['Campo','Irrigação','Mecânica','Packing House','Administração','Outros'];
+const SETORES=['Campo','Irrigação','Mecânica','Packing House','Almoxarifado'];
 const STATUSES=[
   {id:'aberto',     lbl:'Aberto',               cls:'s-aberto',    color:'#45b175'},
   {id:'analise',    lbl:'Em Análise',            cls:'s-analise',   color:'#4a9ee8'},
@@ -451,7 +445,6 @@ const TIPOS={
   equipamento_necessario:'⚙️ Equip. necessário',
   produto_necessario:'📦 Produto/Material',
   servico:'🛠 Serviço/Manutenção',
-  administrativo:'📋 Administrativo',
 };
 const AGING=[
   {d:0,  c:'#45b175',lbl:'Recém aberto',         msg:'Acompanhar'},
@@ -462,7 +455,7 @@ const AGING=[
 ];
 
 /* ═══ STATE ═══ */
-let users=[{id:1,nome:'Maykons',email:'maykons@frutesp.com',senha:'#Mds2026',perfil:'Gestor',setor:'Administração',av:'MS'}];
+let users=[{id:1,nome:'Maykons',email:'maykons@frutesp.com',senha:'#Mds2026',perfil:'Gestor',setor:'Almoxarifado',av:'MS'}];
 let tickets=[];
 let cu=null, curTkId=null;
 let filt={setor:'todos',status:'todos'};
@@ -498,7 +491,7 @@ function doReg(){
   const nome=document.getElementById('rn').value.trim();
   const email=document.getElementById('re').value.trim().toLowerCase();
   const senha=document.getElementById('rs').value;
-  const perfil=document.getElementById('rp').value;
+  const perfil='Solicitante';
   const setor=document.getElementById('rst').value;
   const err=document.getElementById('rerr');
   if(!nome||!email||!senha){err.textContent='Preencha todos os campos.';err.style.display='block';return;}
@@ -558,9 +551,12 @@ function navTo(p){
 /* ═══ FILTERS ═══ */
 function buildFilters(){
   const se=document.getElementById('fsetor');
-  se.innerHTML=['todos',...SETORES].map(s=>
-    `<div class="chip ${s==='todos'?'on':''}" onclick="setF('setor','${s}',this)">${s==='todos'?'Todos Setores':s}</div>`
-  ).join('');
+  if(cu.perfil==='Solicitante'){se.style.display='none';}else{
+    se.style.display='';
+    se.innerHTML=['todos',...SETORES].map(s=>
+      `<div class="chip ${s==='todos'?'on':''}" onclick="setF('setor','${s}',this)">${s==='todos'?'Todos Setores':s}</div>`
+    ).join('');
+  }
   const ste=document.getElementById('fstatus');
   ste.innerHTML=`<div class="chip on" onclick="setF('status','todos',this)">Todos</div>`+
     STATUSES.map(s=>`<div class="chip" onclick="setF('status','${s.id}',this)">${s.lbl}</div>`).join('');
@@ -575,8 +571,16 @@ function setF(k,v,el){
 /* ═══ RESP SELECT ═══ */
 function refreshRespSel(){
   const admins=users.filter(u=>u.perfil==='Administrativo'||u.perfil==='Gestor');
-  document.getElementById('nresp').innerHTML='<option value="">— Não atribuído —</option>'+
-    admins.map(u=>`<option value="${u.id}">${u.nome} (${u.perfil})</option>`).join('');
+  const container=document.getElementById('nresp-list');
+  if(!container)return;
+  if(admins.length===0){
+    container.innerHTML='<span style="font-size:12.5px;color:var(--t4)">Nenhum administrativo cadastrado.</span>';return;
+  }
+  container.innerHTML=admins.map(u=>`
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13.5px;color:var(--t2)">
+      <input type="checkbox" value="${u.id}" style="accent-color:var(--g300);width:15px;height:15px;cursor:pointer">
+      <span>${u.nome} <span style="font-size:11px;color:var(--t4)">(${u.perfil})</span></span>
+    </label>`).join('');
 }
 
 /* ═══ DASHBOARD ═══ */
@@ -679,11 +683,13 @@ function submitTk(){
   if(!set){showToast('⚠️ Selecione o setor!');return;}
   if(!tip){showToast('⚠️ Selecione o tipo!');return;}
   seq++;
-  const rid=document.getElementById('nresp').value;
-  const resp=rid?users.find(u=>u.id==rid):null;
+  const checked=[...document.querySelectorAll('#nresp-list input[type=checkbox]:checked')];
+  const respIds=checked.map(c=>parseInt(c.value));
+  const resps=respIds.map(id=>users.find(u=>u.id===id)).filter(Boolean);
   const t={id:seq,proto:`#FRU-${seq}`,titulo:tit,setor:set,tipo:tip,
     desc:document.getElementById('ndesc').value.trim(),
-    responsavel:resp?resp.nome:null,responsavelId:rid||null,
+    responsavel:resps.length?resps.map(r=>r.nome).join(', '):null,
+    responsavelIds:respIds,
     criadoPor:cu.id,criadoNome:cu.nome,criadoEm:Date.now(),
     status:'aberto',
     history:[{status:'aberto',ts:Date.now(),by:cu.nome,obs:'Chamado aberto'}]};
@@ -692,7 +698,7 @@ function submitTk(){
   ['ntit','ndesc'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('nset').value='';
   document.getElementById('ntip').value='';
-  document.getElementById('nresp').value='';
+  document.querySelectorAll('#nresp-list input[type=checkbox]').forEach(c=>c.checked=false);
   showToast(`✅ ${t.proto} aberto!`);
   renderTks();if(cu.perfil==='Gestor')renderDash();
   navTo('chamados');
@@ -802,9 +808,19 @@ function openM(id){
           <div style="font-size:14px;font-weight:700;color:var(--t1)">${u.nome}</div>
           <div style="font-size:11px;color:var(--t4);font-family:var(--fm)">${u.perfil} · ${u.setor}</div>
         </div>
+        ${u.perfil!=='Gestor'?`<select onchange="changeUserPerfil(${u.id},this.value)" style="background:var(--g800);border:1px solid var(--b2);border-radius:6px;color:var(--t2);font-size:11.5px;padding:5px 8px;font-family:var(--fb);cursor:pointer">
+          <option value="Solicitante" ${u.perfil==='Solicitante'?'selected':''}>Solicitante</option>
+          <option value="Administrativo" ${u.perfil==='Administrativo'?'selected':''}>Administrativo</option>
+        </select>`:'<span style="font-size:11px;color:var(--t3);font-weight:700;padding:5px 8px">Gestor</span>'}
       </div>`).join('');
   }
   document.getElementById(id).classList.add('open');
+}
+function changeUserPerfil(uid,newPerfil){
+  const u=users.find(x=>x.id===uid);if(!u||u.perfil==='Gestor')return;
+  u.perfil=newPerfil;
+  showToast(`✅ ${u.nome}: perfil alterado para ${newPerfil}`);
+  refreshRespSel();
 }
 function closeM(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.mbg').forEach(m=>
