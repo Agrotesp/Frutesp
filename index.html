@@ -7,6 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
 :root{
   --g950:#040e09;--g900:#071510;--g850:#0a1d14;--g800:#0d2419;
@@ -256,7 +257,7 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
       <div class="fg"><label>Setor</label>
         <select id="rst">
           <option>Campo</option><option>Irrigação</option><option>Mecânica</option>
-          <option>Packing House</option><option>Almoxarifado</option>
+          <option>Packing House</option><option>Almoxarifado</option><option>Administrativo</option>
         </select></div>
       <button class="btn bp" onclick="doReg()" style="margin-top:6px">Criar Conta</button>
     </div>
@@ -268,6 +269,7 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
   <div class="topbar">
     <div class="tlogo">FRUTE<em>SP</em></div>
     <div class="tchip" id="tchip"></div>
+    <div id="sb-status" title="Status da conexão" style="font-size:16px;cursor:default">🔄</div>
     <div class="tav" id="tav" onclick="navTo('perfil')"></div>
   </div>
   <div class="mwrap" id="mwrap">
@@ -439,6 +441,23 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
 <div class="toast" id="toast"></div>
 
 <script>
+/* ═══ SUPABASE ═══ */
+const SB_URL='https://xarlbbmjuecgzzhfrqqj.supabase.co';
+const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhhcmxiYm1qdWVjZ3p6aGZycXFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxODUwNTEsImV4cCI6MjA4ODc2MTA1MX0.usCyEwTKExiEnPxxOnuLeGthHYJgdEpOy-_tehkH1vU';
+const sb=supabase.createClient(SB_URL,SB_KEY);
+let sbOnline=false;
+
+function setSbStatus(ok){
+  sbOnline=ok;
+  const el=document.getElementById('sb-status');
+  if(el){el.textContent=ok?'🟢':'🔴';el.title=ok?'Conectado ao Supabase':'Offline — dados locais';}
+}
+
+/* ═══ LOCAL STORAGE ═══ */
+const LS_U='fru_users',LS_T='fru_tickets',LS_CU='fru_cu';
+const saveLS=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
+const loadLS=k=>{try{const d=localStorage.getItem(k);return d?JSON.parse(d):null;}catch(e){return null;}};
+
 /* ═══ CONSTANTS ═══ */
 const SETORES=['Campo','Irrigação','Mecânica','Packing House','Almoxarifado'];
 const STATUSES=[
@@ -456,15 +475,16 @@ const TIPOS={
   servico:'🛠 Serviço/Manutenção',
 };
 const AGING=[
-  {d:0, c:'#45b175',lbl:'Em dia',        msg:'Chamado recém aberto',       ico:'🟢'},
-  {d:3, c:'#d4b840',lbl:'Atenção',       msg:'Verificar andamento',        ico:'🟡'},
-  {d:7, c:'#e84f4f',lbl:'CRÍTICO',       msg:'⚠️ Ação imediata necessária!',ico:'🔴'},
+  {d:0, c:'#45b175',lbl:'Em dia',   msg:'Chamado recém aberto',        ico:'🟢'},
+  {d:3, c:'#d4b840',lbl:'Atenção',  msg:'Verificar andamento',         ico:'🟡'},
+  {d:7, c:'#e84f4f',lbl:'CRÍTICO',  msg:'⚠️ Ação imediata necessária!', ico:'🔴'},
 ];
 
 /* ═══ STATE ═══ */
-let users=[{id:1,nome:'Maykons',email:'maykons@frutesp.com',senha:'#Mds2026',perfil:'Gestor',setor:'Almoxarifado',av:'MS'}];
-let tickets=[];
-let cu=null, curTkId=null;
+let users=loadLS(LS_U)||[];
+let tickets=loadLS(LS_T)||[];
+let cu=loadLS(LS_CU)||null;
+let curTkId=null;
 let filt={setor:'todos',status:'todos'};
 let seq=1000;
 
@@ -475,7 +495,24 @@ const stOf=id=>STATUSES.find(s=>s.id===id)||STATUSES[0];
 const sbadge=id=>{const s=stOf(id);return`<span class="badge ${s.cls}">${s.lbl}</span>`;};
 const fmtD=ts=>new Date(ts).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});
 const fmtDT=ts=>new Date(ts).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
-const av=n=>n.trim().split(/\s+/).map(p=>p[0].toUpperCase()).slice(0,2).join('');
+const avOf=n=>n.trim().split(/\s+/).map(p=>p[0].toUpperCase()).slice(0,2).join('');
+
+/* ═══ SB HELPERS ═══ */
+function mapChamado(c,historico){
+  return{
+    id:c.id, proto:c.proto, titulo:c.titulo, setor:c.setor, tipo:c.tipo,
+    desc:c.descricao, status:c.status,
+    responsavel:c.responsavel, responsavelIds:c.responsavel_ids||[],
+    criadoPor:c.criado_por_email, criadoNome:c.criado_nome,
+    criadoEm:new Date(c.criado_em).getTime(),
+    history:(historico||[]).filter(h=>h.chamado_id===c.id)
+      .sort((a,b)=>new Date(a.feito_em)-new Date(b.feito_em))
+      .map(h=>({status:h.status,ts:new Date(h.feito_em).getTime(),by:h.feito_por,obs:h.obs}))
+  };
+}
+function mapUser(u){
+  return{id:u.id,nome:u.nome,email:u.email,senha:u.senha||'',perfil:u.perfil,setor:u.setor,av:u.av||avOf(u.nome)};
+}
 
 /* ═══ AUTH ═══ */
 function showTab(id,el){
@@ -484,39 +521,86 @@ function showTab(id,el){
   el.classList.add('on');
   ['lerr','rerr'].forEach(e=>{const el=document.getElementById(e);if(el)el.style.display='none';});
 }
-function doLogin(){
+
+async function doLogin(){
   const e=document.getElementById('ie').value.trim().toLowerCase();
   const s=document.getElementById('is').value;
+  const errEl=document.getElementById('lerr');
+  const btn=document.querySelector('#tlogin .btn');
+  if(btn){btn.textContent='Entrando...';btn.disabled=true;}
+
+  try{
+    const{data,error}=await sb.from('usuarios').select('*').eq('email',e).eq('senha',s).maybeSingle();
+    setSbStatus(true);
+    if(data){
+      cu=mapUser(data);saveLS(LS_CU,cu);
+      enterApp();return;
+    }
+  }catch(err){setSbStatus(false);}
+
+  // fallback localStorage
   const u=users.find(u=>u.email.toLowerCase()===e&&u.senha===s);
-  if(!u){document.getElementById('lerr').style.display='block';return;}
-  cu=u;
-  document.getElementById('screen-login').classList.remove('active');
-  document.getElementById('screen-app').classList.add('active');
-  initApp();
+  if(!u){
+    errEl.textContent='E-mail ou senha incorretos.';errEl.style.display='block';
+    if(btn){btn.textContent='Entrar';btn.disabled=false;}
+    return;
+  }
+  cu=u;saveLS(LS_CU,cu);enterApp();
 }
-function doReg(){
+
+async function doReg(){
   const nome=document.getElementById('rn').value.trim();
   const email=document.getElementById('re').value.trim().toLowerCase();
   const senha=document.getElementById('rs').value;
-  const perfil='Solicitante';
   const setor=document.getElementById('rst').value;
   const err=document.getElementById('rerr');
   if(!nome||!email||!senha){err.textContent='Preencha todos os campos.';err.style.display='block';return;}
   if(senha.length<6){err.textContent='Senha mínimo 6 caracteres.';err.style.display='block';return;}
-  if(users.find(u=>u.email===email)){err.textContent='E-mail já cadastrado.';err.style.display='block';return;}
-  users.push({id:Date.now(),nome,email,senha,perfil,setor,av:av(nome)});
-  showToast('✅ Conta criada! Faça login.');
+  const btn=document.querySelector('#treg .btn');
+  if(btn){btn.textContent='Cadastrando...';btn.disabled=true;}
+
+  try{
+    // Verificar duplicado no Supabase
+    const{data:dup}=await sb.from('usuarios').select('id').eq('email',email).maybeSingle();
+    if(dup){err.textContent='E-mail já cadastrado.';err.style.display='block';if(btn){btn.textContent='Criar Conta';btn.disabled=false;}return;}
+    const{data,error}=await sb.from('usuarios').insert([{nome,email,senha,perfil:'Solicitante',setor,av:avOf(nome)}]).select().single();
+    setSbStatus(true);
+    if(data){
+      const nu=mapUser(data);
+      users.push(nu);saveLS(LS_U,users);
+      showToast('✅ Conta criada! Faça login.');
+      showTab('tlogin',document.querySelectorAll('.ltab')[0]);
+      ['rn','re','rs'].forEach(id=>document.getElementById(id).value='');
+      if(btn){btn.textContent='Criar Conta';btn.disabled=false;}
+      return;
+    }
+  }catch(e){setSbStatus(false);}
+
+  // fallback local
+  if(users.find(u=>u.email===email)){err.textContent='E-mail já cadastrado.';err.style.display='block';if(btn){btn.textContent='Criar Conta';btn.disabled=false;}return;}
+  const nu={id:Date.now(),nome,email,senha,perfil:'Solicitante',setor,av:avOf(nome)};
+  users.push(nu);saveLS(LS_U,users);
+  showToast('✅ Conta criada (local)! Faça login.');
   showTab('tlogin',document.querySelectorAll('.ltab')[0]);
   ['rn','re','rs'].forEach(id=>document.getElementById(id).value='');
+  if(btn){btn.textContent='Criar Conta';btn.disabled=false;}
 }
+
 function doLogout(){
-  cu=null;
+  cu=null;saveLS(LS_CU,null);
   document.getElementById('screen-app').classList.remove('active');
   document.getElementById('screen-login').classList.add('active');
 }
 
+/* ═══ ENTER APP ═══ */
+function enterApp(){
+  document.getElementById('screen-login').classList.remove('active');
+  document.getElementById('screen-app').classList.add('active');
+  initApp();
+}
+
 /* ═══ INIT ═══ */
-function initApp(){
+async function initApp(){
   const p=cu.perfil;
   document.getElementById('tav').textContent=cu.av;
   document.getElementById('tchip').textContent=p;
@@ -526,7 +610,26 @@ function initApp(){
   document.getElementById('pfemail').textContent=cu.email;
   document.getElementById('btnusers').style.display=p==='Gestor'?'flex':'none';
   document.getElementById('fab').style.display='flex';
-  buildNav(); buildFilters(); refreshRespSel();
+  setSbStatus(false);
+
+  // Carregar usuários
+  try{
+    const{data}=await sb.from('usuarios').select('*');
+    if(data){users=data.map(mapUser);saveLS(LS_U,users);setSbStatus(true);}
+  }catch(e){users=loadLS(LS_U)||users;}
+
+  // Carregar chamados + histórico
+  try{
+    const{data:chamados}=await sb.from('chamados').select('*').order('criado_em',{ascending:false});
+    const{data:hist}=await sb.from('historico').select('*').order('feito_em',{ascending:true});
+    if(chamados){
+      tickets=chamados.map(c=>mapChamado(c,hist||[]));
+      if(tickets.length)seq=Math.max(seq,...tickets.map(t=>typeof t.id==='number'?t.id:0));
+      saveLS(LS_T,tickets);setSbStatus(true);
+    }
+  }catch(e){tickets=loadLS(LS_T)||tickets;}
+
+  buildNav();buildFilters();refreshRespSel();
   if(p==='Gestor'){renderDash();navTo('dashboard');}
   else navTo('chamados');
   renderTks();
@@ -536,7 +639,7 @@ function initApp(){
 function buildNav(){
   const p=cu.perfil;
   const maps={
-    Gestor:    [{id:'dashboard',i:'📊',l:'Painel'},{id:'chamados',i:'📋',l:'Chamados',b:true},{id:'perfil',i:'👤',l:'Perfil'}],
+    Gestor:[{id:'dashboard',i:'📊',l:'Painel'},{id:'chamados',i:'📋',l:'Chamados',b:true},{id:'perfil',i:'👤',l:'Perfil'}],
     Administrativo:[{id:'chamados',i:'📋',l:'Chamados',b:true},{id:'perfil',i:'👤',l:'Perfil'}],
     Solicitante:[{id:'chamados',i:'📋',l:'Chamados',b:true},{id:'perfil',i:'👤',l:'Perfil'}],
   };
@@ -605,11 +708,10 @@ function renderDash(){
     <div class="kcard"><div class="kstripe" style="background:#4a9ee8"></div>
       <div class="kico">🔓</div><div class="kval">${open.length}</div><div class="klbl">Em Aberto</div></div>
     <div class="kcard"><div class="kstripe" style="background:#e84f4f"></div>
-      <div class="kico">⚠️</div><div class="kval ${crit.length>0?'r':''}">${crit.length}</div><div class="klbl">Críticos +14d</div></div>
+      <div class="kico">⚠️</div><div class="kval ${crit.length>0?'r':''}">${crit.length}</div><div class="klbl">Críticos +7d</div></div>
     <div class="kcard"><div class="kstripe" style="background:#d4b840"></div>
       <div class="kico">⏱</div><div class="kval ${tmedio>7?'y':''}">${tmedio}d</div><div class="klbl">Tempo médio</div></div>`;
 
-  // Tempo médio por etapa
   const med={};
   STATUSES.forEach(s=>{med[s.id]={t:0,n:0};});
   all.forEach(tk=>{
@@ -631,7 +733,6 @@ function renderDash(){
     </div>`;
   }).join('');
 
-  // Chamados em atenção (3+ dias)
   const atr=open.filter(t=>dias(t.criadoEm)>=3).sort((a,b)=>a.criadoEm-b.criadoEm);
   document.getElementById('atrlbl').textContent=`Chamados em atenção (${atr.length})`;
   document.getElementById('tkatr').innerHTML=atr.length
@@ -642,7 +743,7 @@ function renderDash(){
 /* ═══ TICKETS ═══ */
 function getVis(){
   let list=tickets;
-  if(cu.perfil==='Solicitante')list=list.filter(t=>t.criadoPor===cu.id);
+  if(cu.perfil==='Solicitante')list=list.filter(t=>t.criadoPor===cu.email);
   if(filt.setor!=='todos')list=list.filter(t=>t.setor===filt.setor);
   if(filt.status!=='todos')list=list.filter(t=>t.status===filt.status);
   return list.sort((a,b)=>b.criadoEm-a.criadoEm);
@@ -676,31 +777,52 @@ function renderTks(){
   document.getElementById('tkcnt').textContent=`${list.length} chamado${list.length!==1?'s':''}`;
   document.getElementById('tklist').innerHTML=list.length?list.map(buildCard).join('')
     :`<div class="empty"><div class="eico">📭</div><p>Nenhum chamado encontrado.</p></div>`;
-  const abertos=tickets.filter(t=>t.status!=='finalizado'&&(cu.perfil==='Solicitante'?t.criadoPor===cu.id:true)).length;
+  const abertos=tickets.filter(t=>t.status!=='finalizado'&&(cu.perfil==='Solicitante'?t.criadoPor===cu.email:true)).length;
   const nb=document.getElementById('nbadge');
   if(nb){nb.textContent=abertos;nb.style.display=abertos>0?'flex':'none';}
 }
 
 /* ═══ NEW TICKET ═══ */
-function submitTk(){
+async function submitTk(){
   const tit=document.getElementById('ntit').value.trim();
   const set=document.getElementById('nset').value;
   const tip=document.getElementById('ntip').value;
   if(!tit){showToast('⚠️ Informe o título!');return;}
   if(!set){showToast('⚠️ Selecione o setor!');return;}
   if(!tip){showToast('⚠️ Selecione o tipo!');return;}
-  seq++;
+
   const checked=[...document.querySelectorAll('#nresp-list input[type=checkbox]:checked')];
-  const respIds=checked.map(c=>parseInt(c.value));
-  const resps=respIds.map(id=>users.find(u=>u.id===id)).filter(Boolean);
-  const t={id:seq,proto:`#FRU-${seq}`,titulo:tit,setor:set,tipo:tip,
-    desc:document.getElementById('ndesc').value.trim(),
-    responsavel:resps.length?resps.map(r=>r.nome).join(', '):null,
-    responsavelIds:respIds,
-    criadoPor:cu.id,criadoNome:cu.nome,criadoEm:Date.now(),
+  const respIds=checked.map(c=>c.value);
+  const resps=respIds.map(id=>users.find(u=>String(u.id)===String(id))).filter(Boolean);
+  const descVal=document.getElementById('ndesc').value.trim();
+  const respNomes=resps.length?resps.map(r=>r.nome).join(', '):null;
+  const nowISO=new Date().toISOString();
+
+  let tkId=null;
+
+  try{
+    seq++;
+    const{data,error}=await sb.from('chamados').insert([{
+      proto:`#FRU-${seq}`,titulo:tit,setor:set,tipo:tip,descricao:descVal,
+      status:'aberto',criado_por_email:cu.email,criado_nome:cu.nome,
+      criado_em:nowISO,responsavel:respNomes,responsavel_ids:respIds
+    }]).select().single();
+    if(data){
+      tkId=data.id;
+      await sb.from('historico').insert([{
+        chamado_id:tkId,status:'aberto',obs:'Chamado aberto',feito_por:cu.nome,feito_em:nowISO
+      }]);
+      setSbStatus(true);
+    }
+  }catch(e){setSbStatus(false);seq++;tkId=seq;}
+
+  const t={id:tkId||seq,proto:`#FRU-${tkId||seq}`,titulo:tit,setor:set,tipo:tip,
+    desc:descVal,responsavel:respNomes,responsavelIds:respIds,
+    criadoPor:cu.email,criadoNome:cu.nome,criadoEm:Date.now(),
     status:'aberto',
     history:[{status:'aberto',ts:Date.now(),by:cu.nome,obs:'Chamado aberto'}]};
   tickets.unshift(t);
+  saveLS(LS_T,tickets);
   closeM('mticket');
   ['ntit','ndesc'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('nset').value='';
@@ -719,13 +841,12 @@ function openDet(id){
   document.getElementById('dproto').textContent=t.proto;
   document.getElementById('dbadge').innerHTML=sbadge(t.status);
 
-  // Aging banner
   const ban=document.getElementById('aging-ban');
-  const showBan=(cu.perfil==='Gestor')||(d>=7&&t.status!=='finalizado');
+  const showBan=(cu.perfil==='Gestor')||(d>=3&&t.status!=='finalizado');
   if(showBan&&t.status!=='finalizado'){
     ban.style.display='flex';ban.style.background=ag.c+'18';ban.style.borderColor=ag.c+'44';
     document.getElementById('aban').textContent=d;document.getElementById('aban').style.color=ag.c;
-    document.getElementById('ablbl').textContent=ag.lbl;document.getElementById('ablbl').style.color=ag.c;
+    document.getElementById('ablbl').textContent=ag.lbl+' '+ag.ico;document.getElementById('ablbl').style.color=ag.c;
     document.getElementById('abmsg').textContent=ag.msg;
   }else ban.style.display='none';
 
@@ -739,7 +860,6 @@ function openDet(id){
   document.getElementById('d-abert').textContent=fmtDT(t.criadoEm);
   document.getElementById('d-desc').textContent=t.desc||'Sem descrição.';
 
-  // Tempo por etapa
   const tsec=document.getElementById('d-tempo-sec');
   if(t.history&&t.history.length>1){
     tsec.style.display='';
@@ -755,7 +875,6 @@ function openDet(id){
     }).join('');
   }else tsec.style.display='none';
 
-  // Histórico
   document.getElementById('d-hist').innerHTML=t.history.slice().reverse().map(h=>{
     const si=stOf(h.status);
     return`<div class="hitem">
@@ -793,12 +912,23 @@ function openStModal(){
   document.getElementById('nobs').value='';
   openM('mstatus');
 }
-function applyStatus(){
+async function applyStatus(){
   const t=tickets.find(x=>x.id===curTkId);if(!t)return;
   const ns=document.getElementById('nst').value;
   const obs=document.getElementById('nobs').value.trim();
+  const nowISO=new Date().toISOString();
+
+  try{
+    await sb.from('chamados').update({status:ns}).eq('id',t.id);
+    await sb.from('historico').insert([{
+      chamado_id:t.id,status:ns,obs:obs||null,feito_por:cu.nome,feito_em:nowISO
+    }]);
+    setSbStatus(true);
+  }catch(e){setSbStatus(false);}
+
   t.history.push({status:ns,ts:Date.now(),by:cu.nome,obs:obs||null});
   t.status=ns;
+  saveLS(LS_T,tickets);
   closeM('mstatus');
   showToast(`✅ Status: ${stOf(ns).lbl}`);
   openDet(t.id);renderTks();
@@ -815,7 +945,7 @@ function openM(id){
           <div style="font-size:14px;font-weight:700;color:var(--t1)">${u.nome}</div>
           <div style="font-size:11px;color:var(--t4);font-family:var(--fm)">${u.perfil} · ${u.setor}</div>
         </div>
-        ${u.perfil!=='Gestor'?`<select onchange="changeUserPerfil(${u.id},this.value)" style="background:var(--g800);border:1px solid var(--b2);border-radius:6px;color:var(--t2);font-size:11.5px;padding:5px 8px;font-family:var(--fb);cursor:pointer">
+        ${u.perfil!=='Gestor'?`<select onchange="changeUserPerfil('${u.id}',this.value)" style="background:var(--g800);border:1px solid var(--b2);border-radius:6px;color:var(--t2);font-size:11.5px;padding:5px 8px;font-family:var(--fb);cursor:pointer">
           <option value="Solicitante" ${u.perfil==='Solicitante'?'selected':''}>Solicitante</option>
           <option value="Administrativo" ${u.perfil==='Administrativo'?'selected':''}>Administrativo</option>
         </select>`:'<span style="font-size:11px;color:var(--t3);font-weight:700;padding:5px 8px">Gestor</span>'}
@@ -823,12 +953,19 @@ function openM(id){
   }
   document.getElementById(id).classList.add('open');
 }
-function changeUserPerfil(uid,newPerfil){
-  const u=users.find(x=>x.id===uid);if(!u||u.perfil==='Gestor')return;
+
+async function changeUserPerfil(uid,newPerfil){
+  const u=users.find(x=>String(x.id)===String(uid));if(!u||u.perfil==='Gestor')return;
+  try{
+    await sb.from('usuarios').update({perfil:newPerfil}).eq('id',uid);
+    setSbStatus(true);
+  }catch(e){setSbStatus(false);}
   u.perfil=newPerfil;
-  showToast(`✅ ${u.nome}: perfil alterado para ${newPerfil}`);
+  saveLS(LS_U,users);
+  showToast(`✅ ${u.nome}: perfil → ${newPerfil}`);
   refreshRespSel();
 }
+
 function closeM(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.mbg').forEach(m=>
   m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');}));
@@ -842,148 +979,64 @@ function exportPDF(){
   const todayStr=today.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
   const todayFile=today.toISOString().slice(0,10);
 
-  // ── CABEÇALHO ──
-  doc.setFillColor(13,36,25);
-  doc.rect(0,0,pw,28,'F');
+  doc.setFillColor(13,36,25);doc.rect(0,0,pw,28,'F');
+  doc.setFont('helvetica','bold');doc.setFontSize(26);doc.setTextColor(69,177,117);doc.text('FRUTE',14,18);
+  doc.setTextColor(255,255,255);doc.text('SP',48,18);
+  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(163,204,183);doc.text('Sistema de Chamados Operacionais',14,23);
+  doc.setFont('helvetica','bold');doc.setFontSize(13);doc.setTextColor(255,255,255);doc.text('Relatório de Chamados',pw/2,13,{align:'center'});
+  doc.setFont('helvetica','normal');doc.setFontSize(8.5);doc.setTextColor(163,204,183);doc.text(`Gerado em ${todayStr}`,pw/2,19,{align:'center'});
 
-  // Logo texto
-  doc.setFont('helvetica','bold');
-  doc.setFontSize(26);
-  doc.setTextColor(69,177,117);
-  doc.text('FRUTE',14,18);
-  doc.setTextColor(255,255,255);
-  doc.text('SP',48,18);
-
-  // Subtítulo
-  doc.setFont('helvetica','normal');
-  doc.setFontSize(9);
-  doc.setTextColor(163,204,183);
-  doc.text('Sistema de Chamados Operacionais',14,23);
-
-  // Título do relatório
-  doc.setFont('helvetica','bold');
-  doc.setFontSize(13);
-  doc.setTextColor(255,255,255);
-  doc.text('Relatório de Chamados',pw/2,13,{align:'center'});
-  doc.setFont('helvetica','normal');
-  doc.setFontSize(8.5);
-  doc.setTextColor(163,204,183);
-  doc.text(`Gerado em ${todayStr}`,pw/2,19,{align:'center'});
-
-  // Stats no cabeçalho
   const total=tickets.length;
   const abertos=tickets.filter(t=>t.status!=='finalizado').length;
   const criticos=tickets.filter(t=>t.status!=='finalizado'&&dias(t.criadoEm)>=7).length;
-  const stats=[
-    {lbl:'Total de Chamados',val:String(total)},
-    {lbl:'Em Aberto',val:String(abertos)},
-    {lbl:'Críticos (7+ dias)',val:String(criticos)},
-  ];
+  const stats=[{lbl:'Total',val:String(total)},{lbl:'Em Aberto',val:String(abertos)},{lbl:'Críticos 7+d',val:String(criticos)}];
   let sx=pw-14;
   stats.slice().reverse().forEach(s=>{
-    const tw=doc.getTextWidth(s.val)+doc.getTextWidth(s.lbl)+8;
-    sx-=tw+4;
-    doc.setFont('helvetica','bold');doc.setFontSize(13);doc.setTextColor(69,177,117);
-    doc.text(s.val,sx,13);
-    doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.setTextColor(163,204,183);
-    doc.text(s.lbl,sx,19);
+    const tw=Math.max(doc.getTextWidth(s.val),doc.getTextWidth(s.lbl))+4;
+    sx-=tw+8;
+    doc.setFont('helvetica','bold');doc.setFontSize(13);doc.setTextColor(69,177,117);doc.text(s.val,sx,13);
+    doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.setTextColor(163,204,183);doc.text(s.lbl,sx,19);
   });
 
-  // ── TABELA ──
   const cols=[
-    {header:'Protocolo',dataKey:'proto'},
-    {header:'Título',dataKey:'titulo'},
-    {header:'Setor',dataKey:'setor'},
-    {header:'Tipo',dataKey:'tipo'},
-    {header:'Status',dataKey:'status'},
-    {header:'Solicitante',dataKey:'sol'},
-    {header:'Responsável(is)',dataKey:'resp'},
-    {header:'Abertura',dataKey:'abert'},
-    {header:'Dias',dataKey:'dias'},
-    {header:'Último Andamento',dataKey:'ultimo'},
+    {header:'Protocolo',dataKey:'proto'},{header:'Título',dataKey:'titulo'},
+    {header:'Setor',dataKey:'setor'},{header:'Tipo',dataKey:'tipo'},
+    {header:'Status',dataKey:'status'},{header:'Solicitante',dataKey:'sol'},
+    {header:'Responsável(is)',dataKey:'resp'},{header:'Abertura',dataKey:'abert'},
+    {header:'Dias',dataKey:'dias'},{header:'Último Andamento',dataKey:'ultimo'},
   ];
-
   const rows=tickets.map(t=>{
     const d=dias(t.criadoEm);
     const lastH=t.history&&t.history.length?t.history[t.history.length-1]:null;
-    return{
-      proto:t.proto,
-      titulo:t.titulo,
-      setor:t.setor,
-      tipo:(TIPOS[t.tipo]||t.tipo).replace(/[^\x00-\x7F]/g,'').trim(),
-      status:stOf(t.status).lbl,
-      sol:t.criadoNome||'—',
-      resp:t.responsavel||'Não atribuído',
-      abert:fmtD(t.criadoEm),
-      dias:String(d)+'d',
-      ultimo:lastH?`${stOf(lastH.status).lbl}\n${fmtDT(lastH.ts)}`:'—',
-      _d:d,
-      _status:t.status,
-    };
+    return{proto:t.proto,titulo:t.titulo,setor:t.setor,tipo:(TIPOS[t.tipo]||t.tipo).replace(/[^\x00-\x7F]/g,'').trim(),
+      status:stOf(t.status).lbl,sol:t.criadoNome||'—',resp:t.responsavel||'Não atribuído',
+      abert:fmtD(t.criadoEm),dias:String(d)+'d',
+      ultimo:lastH?`${stOf(lastH.status).lbl}\n${fmtDT(lastH.ts)}`:'—',_d:d,_status:t.status};
   });
-
-  // Cor do status
-  const statusColors={
-    aberto:[69,177,117],
-    analise:[74,158,232],
-    andamento:[180,155,40],
-    compra:[155,114,232],
-    aguardando:[200,120,60],
-    finalizado:[92,145,120],
-  };
-
+  const statusColors={aberto:[69,177,117],analise:[74,158,232],andamento:[180,155,40],compra:[155,114,232],aguardando:[200,120,60],finalizado:[92,145,120]};
   doc.autoTable({
-    startY:32,
-    columns:cols,
-    body:rows,
-    theme:'grid',
+    startY:32,columns:cols,body:rows,theme:'grid',
     styles:{font:'helvetica',fontSize:8,cellPadding:{top:3,bottom:3,left:3,right:3},overflow:'linebreak',textColor:[30,50,40],lineColor:[220,220,220],lineWidth:0.2},
     headStyles:{fillColor:[13,36,25],textColor:[255,255,255],fontStyle:'bold',fontSize:8.5,halign:'center'},
     alternateRowStyles:{fillColor:[245,250,247]},
-    columnStyles:{
-      proto:{fontStyle:'bold',cellWidth:22,textColor:[42,112,73]},
-      titulo:{cellWidth:42},
-      setor:{cellWidth:22,halign:'center'},
-      tipo:{cellWidth:28},
-      status:{cellWidth:28,halign:'center'},
-      sol:{cellWidth:24},
-      resp:{cellWidth:30},
-      abert:{cellWidth:22,halign:'center',fontSize:7.5},
-      dias:{cellWidth:12,halign:'center',fontStyle:'bold'},
-      ultimo:{cellWidth:36,fontSize:7.5},
-    },
+    columnStyles:{proto:{fontStyle:'bold',cellWidth:22,textColor:[42,112,73]},titulo:{cellWidth:42},setor:{cellWidth:22,halign:'center'},
+      tipo:{cellWidth:28},status:{cellWidth:28,halign:'center'},sol:{cellWidth:24},resp:{cellWidth:30},
+      abert:{cellWidth:22,halign:'center',fontSize:7.5},dias:{cellWidth:12,halign:'center',fontStyle:'bold'},ultimo:{cellWidth:36,fontSize:7.5}},
     willDrawCell(data){
       if(data.section==='body'){
-        // Colorir coluna Dias
-        if(data.column.dataKey==='dias'){
-          const d=rows[data.row.index]._d;
-          const c=d>=7?[192,57,43]:d>=3?[184,134,11]:[42,112,73];
-          doc.setTextColor(...c);
-        }
-        // Colorir coluna Status
-        if(data.column.dataKey==='status'){
-          const sid=tickets[data.row.index]?.status;
-          const c=statusColors[sid]||[60,80,70];
-          doc.setTextColor(...c);
-        }
+        if(data.column.dataKey==='dias'){const d=rows[data.row.index]._d;doc.setTextColor(...(d>=7?[192,57,43]:d>=3?[184,134,11]:[42,112,73]));}
+        if(data.column.dataKey==='status'){const sid=tickets[data.row.index]?.status;doc.setTextColor(...(statusColors[sid]||[60,80,70]));}
       }
     },
-    didDrawPage(data){
-      // Rodapé
-      const pageCount=doc.internal.getNumberOfPages();
-      const cur=doc.internal.getCurrentPageInfo().pageNumber;
-      doc.setFont('helvetica','normal');
-      doc.setFontSize(7.5);
-      doc.setTextColor(150,150,150);
-      doc.text(`Página ${cur} de ${pageCount}`,pw-14,doc.internal.pageSize.getHeight()-6,{align:'right'});
-      doc.text(`Gerado em ${todayStr} — FRUTESP Sistema de Chamados`,14,doc.internal.pageSize.getHeight()-6);
-      // linha rodapé
-      doc.setDrawColor(200,200,200);
-      doc.setLineWidth(0.3);
-      doc.line(14,doc.internal.pageSize.getHeight()-9,pw-14,doc.internal.pageSize.getHeight()-9);
+    didDrawPage(){
+      const pageCount=doc.internal.getNumberOfPages();const cur=doc.internal.getCurrentPageInfo().pageNumber;
+      const ph=doc.internal.pageSize.getHeight();
+      doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.setTextColor(150,150,150);
+      doc.text(`Página ${cur} de ${pageCount}`,pw-14,ph-6,{align:'right'});
+      doc.text(`Gerado em ${todayStr} — FRUTESP Sistema de Chamados`,14,ph-6);
+      doc.setDrawColor(200,200,200);doc.setLineWidth(0.3);doc.line(14,ph-9,pw-14,ph-9);
     },
   });
-
   doc.save(`relatorio-chamados-${todayFile}.pdf`);
   showToast('✅ Relatório PDF exportado!');
 }
@@ -994,6 +1047,9 @@ function showToast(msg){
   const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');
   clearTimeout(_tt);_tt=setTimeout(()=>t.classList.remove('show'),3200);
 }
+
+/* ═══ AUTO LOGIN (sessão salva) ═══ */
+if(cu){enterApp();}
 </script>
 </body>
 </html>
