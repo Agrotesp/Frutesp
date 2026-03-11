@@ -272,7 +272,14 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
 
     <!-- PAINEL GESTOR -->
     <div id="page-dashboard" class="page active">
-      <div class="ph"><h2>Painel do Gestor</h2></div>
+      <div class="ph"><h2>Painel do Gestor</h2>
+        <button class="btn bg bsm" onclick="exportCSV()" title="Exportar relatório CSV">⬇️ Exportar</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap=6px;background:rgba(69,177,117,.12);border:1px solid rgba(69,177,117,.3);border-radius:20px;padding:5px 12px;font-size:12px;font-weight:700;color:#45b175;gap:5px">🟢 0–2 dias <span style="font-weight:400;color:var(--t4)">Em dia</span></div>
+        <div style="display:flex;align-items:center;gap=6px;background:rgba(212,184,64,.12);border:1px solid rgba(212,184,64,.3);border-radius:20px;padding:5px 12px;font-size:12px;font-weight:700;color:#d4b840;gap:5px">🟡 3–6 dias <span style="font-weight:400;color:var(--t4)">Atenção</span></div>
+        <div style="display:flex;align-items:center;gap=6px;background:rgba(232,79,79,.12);border:1px solid rgba(232,79,79,.3);border-radius:20px;padding:5px 12px;font-size:12px;font-weight:700;color:#e84f4f;gap:5px">🔴 7+ dias <span style="font-weight:400;color:var(--t4)">Crítico</span></div>
+      </div>
       <div class="kgrid" id="kgrid"></div>
       <div class="slbl">Tempo médio por etapa</div>
       <div class="ecard">
@@ -447,11 +454,9 @@ const TIPOS={
   servico:'🛠 Serviço/Manutenção',
 };
 const AGING=[
-  {d:0,  c:'#45b175',lbl:'Recém aberto',         msg:'Acompanhar'},
-  {d:3,  c:'#4a9ee8',lbl:'Atenção recomendada',  msg:'Verificar andamento'},
-  {d:7,  c:'#d4b840',lbl:'Requer ação',           msg:'Ação necessária em breve'},
-  {d:14, c:'#e8934a',lbl:'Situação crítica',      msg:'Prioridade imediata'},
-  {d:21, c:'#e84f4f',lbl:'CRÍTICO',               msg:'⚠️ Chamado muito atrasado!'},
+  {d:0, c:'#45b175',lbl:'Em dia',        msg:'Chamado recém aberto',       ico:'🟢'},
+  {d:3, c:'#d4b840',lbl:'Atenção',       msg:'Verificar andamento',        ico:'🟡'},
+  {d:7, c:'#e84f4f',lbl:'CRÍTICO',       msg:'⚠️ Ação imediata necessária!',ico:'🔴'},
 ];
 
 /* ═══ STATE ═══ */
@@ -587,7 +592,7 @@ function refreshRespSel(){
 function renderDash(){
   const all=tickets;
   const open=all.filter(t=>t.status!=='finalizado');
-  const crit=open.filter(t=>dias(t.criadoEm)>=14);
+  const crit=open.filter(t=>dias(t.criadoEm)>=7);
   const fin=all.filter(t=>t.status==='finalizado');
   const tdTotal=fin.reduce((s,t)=>s+dias(t.criadoEm),0);
   const tmedio=fin.length?Math.round(tdTotal/fin.length):0;
@@ -825,6 +830,41 @@ function changeUserPerfil(uid,newPerfil){
 function closeM(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.mbg').forEach(m=>
   m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');}));
+
+/* ═══ EXPORT CSV ═══ */
+function exportCSV(){
+  const cols=['Protocolo','Título','Setor','Tipo','Status','Solicitante','Responsável(is)','Data de Abertura','Dias em Aberto','Último Andamento','Data do Último Andamento'];
+  const rows=tickets.map(t=>{
+    const d=dias(t.criadoEm);
+    const lastH=t.history&&t.history.length?t.history[t.history.length-1]:null;
+    const lastSt=lastH?stOf(lastH.status).lbl:'—';
+    const lastDt=lastH?fmtDT(lastH.ts):'—';
+    const row=[
+      t.proto,
+      t.titulo,
+      t.setor,
+      TIPOS[t.tipo]||t.tipo,
+      stOf(t.status).lbl,
+      t.criadoNome||'—',
+      t.responsavel||'Não atribuído',
+      fmtDT(t.criadoEm),
+      d,
+      lastSt,
+      lastDt,
+    ];
+    return row.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(';');
+  });
+  const bom='\uFEFF';
+  const csv=bom+[cols.map(c=>`"${c}"`).join(';'),...rows].join('\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  const today=new Date().toISOString().slice(0,10);
+  a.href=url;a.download=`relatorio-chamados-${today}.csv`;
+  document.body.appendChild(a);a.click();
+  document.body.removeChild(a);URL.revokeObjectURL(url);
+  showToast('✅ Relatório exportado!');
+}
 
 /* ═══ TOAST ═══ */
 let _tt;
