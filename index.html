@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>FRUTESP — Chamados Operacionais</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0a1d14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FRUTESP">
+<meta name="mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
@@ -223,6 +229,18 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
 .eico{font-size:48px;margin-bottom:14px;opacity:.5}
 .empty p{font-size:14px;line-height:1.6;color:var(--t3)}
 
+/* CHAT BUBBLES */
+.chat-msg{padding:9px 13px;border-radius:12px;max-width:85%;font-size:13px;line-height:1.45}
+.chat-msg.mine{background:var(--g600);color:var(--t1);align-self:flex-end;border-bottom-right-radius:3px}
+.chat-msg.other{background:var(--g800);color:var(--t2);align-self:flex-start;border-bottom-left-radius:3px;border:1px solid var(--b2)}
+.chat-who{font-size:10px;font-weight:700;color:var(--t4);margin-bottom:3px}
+.chat-time{font-size:10px;color:var(--t4);margin-top:4px;font-family:var(--fm)}
+/* PWA INSTALL BANNER */
+#pwa-banner{display:none;position:fixed;bottom:76px;left:50%;transform:translateX(-50%);background:var(--g700);border:1px solid var(--b3);color:var(--t1);padding:12px 18px;border-radius:12px;font-size:13px;font-weight:600;z-index:998;box-shadow:var(--sh2);gap:12px;align-items:center;max-width:360px;width:calc(100% - 32px)}
+#pwa-banner.show{display:flex}
+/* OFFLINE QUEUE INDICATOR */
+#offline-queue{display:none;position:fixed;top:60px;left:50%;transform:translateX(-50%);background:var(--ora-a);border:1px solid var(--ora);color:var(--ora);padding:7px 16px;border-radius:20px;font-size:12px;font-weight:700;z-index:200}
+
 @media(min-width:600px){
   .mwrap,.bnav,.fab{max-width:680px}
   .mwrap,.msheet{max-width:680px;margin:0 auto}
@@ -272,6 +290,7 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
         <select id="rst">
           <option>Campo</option><option>Irrigação</option><option>Mecânica</option>
           <option>Packing House</option><option>Almoxarifado</option>
+          <option>Drone</option><option>Mel</option><option>Outro</option>
         </select></div>
       <button class="btn bp" onclick="doReg()" style="margin-top:6px">Criar Conta</button>
     </div>
@@ -387,11 +406,14 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
       <div class="dsec-t">Histórico</div>
       <div id="d-hist"></div>
     </div>
-    <div class="dsec" id="d-contestar-sec" style="display:none">
-      <div class="dsec-t">⚠️ Contestar Decisão</div>
-      <p style="font-size:12.5px;color:var(--t3);margin-bottom:10px;line-height:1.5">Explique o motivo da contestação. O gestor/administrativo será notificado.</p>
-      <textarea id="contestar-obs" placeholder="Descreva o motivo da contestação..." style="width:100%;padding:10px 12px;background:var(--g900);border:1.5px solid var(--b2);border-radius:var(--rs);color:var(--t1);font-family:var(--fb);font-size:13.5px;outline:none;resize:vertical;min-height:70px"></textarea>
-      <button class="btn bp" style="margin-top:10px;width:100%" onclick="submitContestar()">Enviar Contestação</button>
+    <div class="dsec" id="d-chat-sec" style="display:none">
+      <div class="dsec-t">💬 Chat — Contestação</div>
+      <div id="d-chat-msgs" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;max-height:260px;overflow-y:auto;padding-right:4px"></div>
+      <textarea id="d-chat-txt" placeholder="Digite sua mensagem..." style="width:100%;background:var(--g900);border:1.5px solid var(--b2);border-radius:var(--rs);color:var(--t1);font-family:var(--fb);font-size:13px;padding:10px 12px;outline:none;resize:vertical;min-height:68px;margin-bottom:8px"></textarea>
+      <div style="display:flex;gap:8px">
+        <button class="btn bp" style="flex:2" onclick="sendChatMsg()">💬 Enviar</button>
+        <button class="btn bg" id="btn-alterar-decisao" style="flex:1;display:none" onclick="openAlterarDecisao()">🔄 Alterar</button>
+      </div>
     </div>
   </div>
   <div class="abar" id="abar"></div>
@@ -416,6 +438,7 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
         <option value="">— Selecione o setor —</option>
         <option>Campo</option><option>Irrigação</option><option>Mecânica</option>
         <option>Packing House</option><option>Almoxarifado</option>
+        <option>Drone</option><option>Mel</option>
       </select></div>
     <div class="fg"><label>Tipo de chamado *</label>
       <select id="ntip">
@@ -467,6 +490,12 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
 </div>
 
 <div class="toast" id="toast"></div>
+<div id="pwa-banner">
+  <span>📲 Instalar app FRUTESP</span>
+  <button class="btn bp bsm" style="flex-shrink:0" onclick="installPWA()">Instalar</button>
+  <button onclick="document.getElementById('pwa-banner').classList.remove('show')" style="background:none;border:none;color:var(--t4);font-size:18px;cursor:pointer;padding:0">✕</button>
+</div>
+<div id="offline-queue"></div>
 
 <script>
 /* ═══ SUPABASE ═══ */
@@ -482,7 +511,7 @@ const saveLS=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
 const loadLS=k=>{try{const d=localStorage.getItem(k);return d?JSON.parse(d):null;}catch(e){return null;}};
 
 /* ═══ CONSTANTS ═══ */
-const SETORES=['Campo','Irrigação','Mecânica','Packing House','Almoxarifado'];
+const SETORES=['Campo','Irrigação','Mecânica','Packing House','Almoxarifado','Drone','Mel'];
 const STATUSES=[
   {id:'aberto',     lbl:'Aberto',               cls:'s-aberto',    color:'#45b175'},
   {id:'analise',    lbl:'Em Análise',            cls:'s-analise',   color:'#4a9ee8'},
@@ -894,46 +923,81 @@ function openDet(id){
   const tsec=document.getElementById('d-tempo-sec');
   if(t.history&&t.history.length>1){
     tsec.style.display='';
-    document.getElementById('d-tempo').innerHTML=t.history.map((h,i)=>{
-      const next=t.history[i+1];const endTs=next?next.ts:Date.now();
-      const si=stOf(h.status);
-      return`<div class="sttime">
-        <span class="sttl"><span class="badge ${si.cls}" style="font-size:10px">${si.lbl}</span></span>
-        <span class="sttv">${fmtTempo(endTs-h.ts)}</span>
-      </div>`;
-    }).join('');
+    document.getElementById('d-tempo').innerHTML=t.history
+      .filter(h=>h.status!=='chat'&&h.status!=='contestado')
+      .map((h,i,arr)=>{
+        const next=arr[i+1];const ms=(next?next.ts:Date.now())-h.ts;
+        const si=stOf(h.status);
+        return`<div class="sttime">
+          <span class="sttl"><span class="badge ${si.cls}" style="font-size:10px">${si.lbl}</span></span>
+          <span class="sttv">${fmtDur(ms)}</span>
+        </div>`;
+      }).join('');
   }else tsec.style.display='none';
 
-  document.getElementById('d-hist').innerHTML=t.history.slice().reverse().map(h=>{
-    const isContest=h.status==='contestado';
-    const si=isContest?{cls:'s-contestado',color:'#e8934a',lbl:'⚠️ Contestação'}:stOf(h.status);
-    return`<div class="hitem">
-      <div class="hdot" style="background:${si.color}"></div>
-      <div style="flex:1">
-        <div class="hact"><span class="badge ${si.cls}" style="font-size:10.5px">${si.lbl}</span></div>
-        ${h.obs?`<div class="hdet">${h.obs}</div>`:''}
-        <div class="htm">${h.by} · ${fmtDT(h.ts)}</div>
-      </div>
-    </div>`;
-  }).join('');
+  // Histórico (exclui mensagens de chat — aparecem no chat)
+  document.getElementById('d-hist').innerHTML=t.history.slice().reverse()
+    .filter(h=>h.status!=='chat')
+    .map(h=>{
+      const isContest=h.status==='contestado';
+      const si=isContest?{cls:'s-contestado',color:'#e8934a',lbl:'⚠️ Contestação'}:stOf(h.status);
+      return`<div class="hitem">
+        <div class="hdot" style="background:${si.color}"></div>
+        <div style="flex:1">
+          <div class="hact"><span class="badge ${si.cls}" style="font-size:10.5px">${si.lbl}</span></div>
+          ${h.obs?`<div class="hdet">${h.obs}</div>`:''}
+          <div class="htm">${h.by} · ${fmtDT(h.ts)}</div>
+        </div>
+      </div>`;
+    }).join('');
 
-  // Seção de contestação: só para solicitante do chamado, quando negado
-  const contestSec=document.getElementById('d-contestar-sec');
-  const jaContestou=t.history.some(h=>h.status==='contestado'&&h.by===cu.nome);
-  if(t.status==='negado'&&cu.email===t.criadoPor&&!jaContestou){
-    contestSec.style.display='';
-    document.getElementById('contestar-obs').value='';
-  }else contestSec.style.display='none';
+  // CHAT — visível quando negado (solicitante contesta, admin/gestor responde)
+  const chatSec=document.getElementById('d-chat-sec');
+  const btnAlterar=document.getElementById('btn-alterar-decisao');
+  const podeChat=(t.status==='negado')&&
+    (cu.email===t.criadoPor||(cu.perfil==='Administrativo'||cu.perfil==='Gestor'));
+  if(podeChat){
+    chatSec.style.display='';
+    // Mostrar botão "Alterar Decisão" só para admin/gestor
+    if(btnAlterar)btnAlterar.style.display=(cu.perfil==='Administrativo'||cu.perfil==='Gestor')?'flex':'none';
+    renderChat(t);
+  }else{
+    chatSec.style.display='none';
+  }
 
   renderAbar(t);
   const ov=document.getElementById('det-ov');ov.classList.add('open');ov.scrollTop=0;
 }
 function closeDet(){document.getElementById('det-ov').classList.remove('open');curTkId=null;}
+
+function renderChat(t){
+  const msgs=t.history.filter(h=>h.status==='chat'||h.status==='contestado');
+  const box=document.getElementById('d-chat-msgs');
+  if(!msgs.length){
+    box.innerHTML=`<p style="font-size:12px;color:var(--t4);text-align:center;padding:12px 0">Nenhuma mensagem ainda.<br>Inicie a contestação abaixo.</p>`;
+    return;
+  }
+  box.innerHTML=msgs.map(h=>{
+    const mine=h.by===cu.nome;
+    return`<div style="display:flex;flex-direction:column;align-items:${mine?'flex-end':'flex-start'}">
+      <div class="chat-msg ${mine?'mine':'other'}">
+        <div class="chat-who">${mine?'Você':h.by}</div>
+        ${h.obs||''}
+        <div class="chat-time">${fmtDT(h.ts)}</div>
+      </div>
+    </div>`;
+  }).join('');
+  setTimeout(()=>{box.scrollTop=box.scrollHeight;},50);
+}
+
 function renderAbar(t){
   const bar=document.getElementById('abar');
   const p=cu.perfil;
-  const enc=t.status==='finalizado'||t.status==='autorizado'||t.status==='negado';
+  const enc=['finalizado','autorizado'].includes(t.status);
   if(enc){
+    bar.innerHTML=`<p style="color:var(--t4);font-size:13px;text-align:center;width:100%;font-weight:600">✅ Chamado encerrado</p>`;return;
+  }
+  if(t.status==='negado'){
     bar.innerHTML=`<button class="btn bg" style="width:100%" onclick="closeDet()">← Voltar</button>`;return;
   }
   if(p==='Administrativo'||p==='Gestor'){
@@ -985,26 +1049,41 @@ async function applyStatus(){
   t.status=ns;
   saveLS(LS_T,tickets);
   closeM('mstatus');
+  // Reset obs label
+  const obsLbl=document.getElementById('nobs-label');
+  if(obsLbl){obsLbl.textContent='Observação (opcional)';obsLbl.style.color='';}
   showToast(`✅ Status: ${stOf(ns).lbl}`);
   openDet(t.id);renderTks();
   if(cu.perfil==='Gestor')renderDash();
 }
 
-/* ═══ CONTESTAÇÃO ═══ */
-async function submitContestar(){
+/* ═══ CHAT DE CONTESTAÇÃO ═══ */
+async function sendChatMsg(){
   const t=tickets.find(x=>x.id===curTkId);if(!t)return;
-  const obs=document.getElementById('contestar-obs').value.trim();
-  if(!obs){showToast('⚠️ Descreva o motivo da contestação!');return;}
+  const txt=document.getElementById('d-chat-txt').value.trim();
+  if(!txt){showToast('⚠️ Digite uma mensagem!');return;}
   const nowISO=new Date().toISOString();
+  const entry={status:'chat',ts:Date.now(),by:cu.nome,obs:txt};
   try{
-    await sb.from('historico').insert([{chamado_id:t.id,status:'contestado',obs,feito_por:cu.nome,feito_em:nowISO}]);
+    await sb.from('historico').insert([{chamado_id:t.id,status:'chat',obs:txt,feito_por:cu.nome,feito_em:nowISO}]);
     setSbStatus(true);
   }catch(e){setSbStatus(false);}
-  t.history.push({status:'contestado',ts:Date.now(),by:cu.nome,obs});
+  t.history.push(entry);
   saveLS(LS_T,tickets);
-  showToast('⚠️ Contestação enviada!');
-  openDet(t.id);
-  if(cu.perfil==='Gestor')renderDash();
+  document.getElementById('d-chat-txt').value='';
+  renderChat(t);
+  showToast('💬 Mensagem enviada!');
+}
+
+function openAlterarDecisao(){
+  const t=tickets.find(x=>x.id===curTkId);if(!t)return;
+  // Forçar modal de status com obs obrigatória
+  const opts=isAuth(t.tipo)?ST_AUTH:ST_NORMAL;
+  document.getElementById('nst').innerHTML=opts.map(o=>`<option value="${o.v}">${o.l}</option>`).join('');
+  document.getElementById('nobs').value='';
+  document.getElementById('nobs-label').textContent='Explique obrigatoriamente o motivo da mudança';
+  document.getElementById('nobs-label').style.color='var(--red)';
+  openM('mstatus');
 }
 
 /* ═══ USERS ═══ */
@@ -1035,6 +1114,7 @@ function closeM(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.mbg').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');}));
 
 /* ═══ EXPORT PDF ═══ */
+function cleanTxt(s){return(s||'').replace(/[^\x00-\x7F\u00C0-\u024F]/g,'').trim();}
 function exportPDF(){
   const{jsPDF}=window.jspdf;
   const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
@@ -1042,33 +1122,222 @@ function exportPDF(){
   const today=new Date();
   const todayStr=today.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
   const todayFile=today.toISOString().slice(0,10);
+
+  // Header
   doc.setFillColor(13,36,25);doc.rect(0,0,pw,28,'F');
   doc.setFont('helvetica','bold');doc.setFontSize(26);doc.setTextColor(69,177,117);doc.text('FRUTE',14,18);
   doc.setTextColor(255,255,255);doc.text('SP',48,18);
-  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(163,204,183);doc.text('Sistema de Chamados Operacionais',14,23);
-  doc.setFont('helvetica','bold');doc.setFontSize(13);doc.setTextColor(255,255,255);doc.text('Relatório de Chamados',pw/2,13,{align:'center'});
-  doc.setFont('helvetica','normal');doc.setFontSize(8.5);doc.setTextColor(163,204,183);doc.text(`Gerado em ${todayStr}`,pw/2,19,{align:'center'});
-  const total=tickets.length;const abertos=tickets.filter(t=>t.status!=='finalizado'&&t.status!=='autorizado').length;const criticos=tickets.filter(t=>t.status!=='finalizado'&&t.status!=='autorizado'&&dias(t.criadoEm)>=7).length;
-  const stats=[{lbl:'Total',val:String(total)},{lbl:'Em Aberto',val:String(abertos)},{lbl:'Críticos 7+d',val:String(criticos)}];
-  let sx=pw-14;stats.slice().reverse().forEach(s=>{const tw=Math.max(doc.getTextWidth(s.val),doc.getTextWidth(s.lbl))+4;sx-=tw+8;doc.setFont('helvetica','bold');doc.setFontSize(13);doc.setTextColor(69,177,117);doc.text(s.val,sx,13);doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.setTextColor(163,204,183);doc.text(s.lbl,sx,19);});
-  const cols=[{header:'Protocolo',dataKey:'proto'},{header:'Título',dataKey:'titulo'},{header:'Urgência',dataKey:'urg'},{header:'Setor',dataKey:'setor'},{header:'Tipo',dataKey:'tipo'},{header:'Status',dataKey:'status'},{header:'Solicitante',dataKey:'sol'},{header:'Abertura',dataKey:'abert'},{header:'Dias',dataKey:'dias'},{header:'Último And.',dataKey:'ultimo'}];
-  const rows=tickets.map(t=>{const d=dias(t.criadoEm);const lastH=t.history&&t.history.length?t.history[t.history.length-1]:null;return{proto:t.proto,titulo:t.titulo,urg:urgOf(t.urgencia||'normal').lbl.replace(/[^\x00-\x7F]/g,'').trim(),setor:t.setor,tipo:(TIPOS[t.tipo]||t.tipo).replace(/[^\x00-\x7F]/g,'').trim(),status:stOf(t.status).lbl,sol:t.criadoNome||'—',abert:fmtD(t.criadoEm),dias:String(d)+'d',ultimo:lastH?`${stOf(lastH.status).lbl}\n${fmtDT(lastH.ts)}`:'—',_d:d,_status:t.status,_urg:t.urgencia};});
+  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(163,204,183);
+  doc.text('Sistema de Chamados Operacionais',14,23);
+  doc.setFont('helvetica','bold');doc.setFontSize(13);doc.setTextColor(255,255,255);
+  doc.text('Relatorio de Chamados',pw/2,13,{align:'center'});
+  doc.setFont('helvetica','normal');doc.setFontSize(8.5);doc.setTextColor(163,204,183);
+  doc.text(`Gerado em ${todayStr}`,pw/2,19,{align:'center'});
+
+  const total=tickets.length;
+  const abertos=tickets.filter(t=>!['finalizado','autorizado','negado'].includes(t.status)).length;
+  const criticos=tickets.filter(t=>!['finalizado','autorizado','negado'].includes(t.status)&&dias(t.criadoEm)>=7).length;
+  const stats=[{lbl:'Total',val:String(total)},{lbl:'Em Aberto',val:String(abertos)},{lbl:'Criticos 7+d',val:String(criticos)}];
+  let sx=pw-14;
+  stats.slice().reverse().forEach(s=>{
+    const tw=Math.max(doc.getTextWidth(s.val),doc.getTextWidth(s.lbl))+4;sx-=tw+8;
+    doc.setFont('helvetica','bold');doc.setFontSize(13);doc.setTextColor(69,177,117);doc.text(s.val,sx,13);
+    doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.setTextColor(163,204,183);doc.text(s.lbl,sx,19);
+  });
+
+  // Status label sem emoji
+  function stLbl(id){
+    const map={aberto:'Aberto',analise:'Em Analise',compra:'Sol. Compra',aguardando:'Aguardando',finalizado:'Finalizado',autorizado:'Autorizado',negado:'Negado'};
+    return map[id]||id;
+  }
+  function urgLbl(u){return u==='urgente'?'Urgente':u==='importante'?'Importante':'Normal';}
+
+  const cols=[
+    {header:'Protocolo',dataKey:'proto'},{header:'Titulo',dataKey:'titulo'},
+    {header:'Urgencia',dataKey:'urg'},{header:'Setor',dataKey:'setor'},
+    {header:'Tipo',dataKey:'tipo'},{header:'Status',dataKey:'status'},
+    {header:'Solicitante',dataKey:'sol'},{header:'Atualizado por',dataKey:'upby'},
+    {header:'Abertura',dataKey:'abert'},{header:'Dias',dataKey:'dias'},
+    {header:'Ultimo Status',dataKey:'ultimo'},
+  ];
+
+  const rows=tickets.map(t=>{
+    const d=dias(t.criadoEm);
+    const realHist=t.history.filter(h=>h.status!=='chat');
+    const lastH=realHist.length?realHist[realHist.length-1]:null;
+    return{
+      proto:t.proto, titulo:cleanTxt(t.titulo),
+      urg:urgLbl(t.urgencia||'normal'),
+      setor:cleanTxt(t.setor),
+      tipo:cleanTxt(TIPOS[t.tipo]||t.tipo),
+      status:stLbl(t.status),
+      sol:cleanTxt(t.criadoNome)||'--',
+      upby:cleanTxt(lastH?lastH.by:'--'),
+      abert:fmtD(t.criadoEm), dias:String(d)+'d',
+      ultimo:lastH?`${stLbl(lastH.status)}\n${fmtDT(lastH.ts)}`:'--',
+      _d:d, _status:t.status, _urg:t.urgencia||'normal'
+    };
+  });
+
   const statusColors={aberto:[69,177,117],analise:[74,158,232],compra:[155,114,232],aguardando:[200,120,60],finalizado:[92,145,120],autorizado:[42,112,73],negado:[192,57,43]};
-  doc.autoTable({startY:32,columns:cols,body:rows,theme:'grid',styles:{font:'helvetica',fontSize:8,cellPadding:{top:3,bottom:3,left:3,right:3},overflow:'linebreak',textColor:[30,50,40],lineColor:[220,220,220],lineWidth:0.2},headStyles:{fillColor:[13,36,25],textColor:[255,255,255],fontStyle:'bold',fontSize:8.5,halign:'center'},alternateRowStyles:{fillColor:[245,250,247]},
-    columnStyles:{proto:{fontStyle:'bold',cellWidth:22,textColor:[42,112,73]},titulo:{cellWidth:38},urg:{cellWidth:18,halign:'center'},setor:{cellWidth:20,halign:'center'},tipo:{cellWidth:28},status:{cellWidth:26,halign:'center'},sol:{cellWidth:24},abert:{cellWidth:20,halign:'center',fontSize:7.5},dias:{cellWidth:12,halign:'center',fontStyle:'bold'},ultimo:{cellWidth:34,fontSize:7.5}},
-    willDrawCell(data){if(data.section==='body'){if(data.column.dataKey==='dias'){const d=rows[data.row.index]._d;doc.setTextColor(...(d>=7?[192,57,43]:d>=3?[184,134,11]:[42,112,73]));}if(data.column.dataKey==='status'){const sid=tickets[data.row.index]?.status;doc.setTextColor(...(statusColors[sid]||[60,80,70]));}}},
-    didDrawPage(){const pageCount=doc.internal.getNumberOfPages();const cur=doc.internal.getCurrentPageInfo().pageNumber;const ph=doc.internal.pageSize.getHeight();doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.setTextColor(150,150,150);doc.text(`Página ${cur} de ${pageCount}`,pw-14,ph-6,{align:'right'});doc.text(`Gerado em ${todayStr} — FRUTESP Sistema de Chamados`,14,ph-6);doc.setDrawColor(200,200,200);doc.setLineWidth(0.3);doc.line(14,ph-9,pw-14,ph-9);}});
+
+  const footer=()=>{
+    const pageCount=doc.internal.getNumberOfPages();
+    const cur=doc.internal.getCurrentPageInfo().pageNumber;
+    const ph=doc.internal.pageSize.getHeight();
+    doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.setTextColor(150,150,150);
+    doc.text(`Pagina ${cur} de ${pageCount}`,pw-14,ph-6,{align:'right'});
+    doc.text(`Gerado em ${todayStr} - FRUTESP`,14,ph-6);
+    doc.setDrawColor(200,200,200);doc.setLineWidth(0.3);doc.line(14,ph-9,pw-14,ph-9);
+  };
+
+  doc.autoTable({
+    startY:32, columns:cols, body:rows, theme:'grid',
+    styles:{font:'helvetica',fontSize:7.5,cellPadding:{top:3,bottom:3,left:3,right:3},overflow:'linebreak',textColor:[30,50,40],lineColor:[220,220,220],lineWidth:0.2},
+    headStyles:{fillColor:[13,36,25],textColor:[255,255,255],fontStyle:'bold',fontSize:8,halign:'center'},
+    alternateRowStyles:{fillColor:[245,250,247]},
+    columnStyles:{
+      proto:{fontStyle:'bold',cellWidth:20,textColor:[42,112,73]},
+      titulo:{cellWidth:34}, urg:{cellWidth:16,halign:'center'},
+      setor:{cellWidth:18,halign:'center'}, tipo:{cellWidth:24},
+      status:{cellWidth:20,halign:'center'}, sol:{cellWidth:20},
+      upby:{cellWidth:20}, abert:{cellWidth:18,halign:'center',fontSize:7},
+      dias:{cellWidth:10,halign:'center',fontStyle:'bold'}, ultimo:{cellWidth:30,fontSize:7}
+    },
+    willDrawCell(data){
+      if(data.section==='body'){
+        if(data.column.dataKey==='dias'){const d=rows[data.row.index]._d;doc.setTextColor(...(d>=7?[192,57,43]:d>=3?[184,134,11]:[42,112,73]));}
+        if(data.column.dataKey==='status'){const sid=rows[data.row.index]._status;doc.setTextColor(...(statusColors[sid]||[60,80,70]));}
+        if(data.column.dataKey==='urg'){const u=rows[data.row.index]._urg;doc.setTextColor(...(u==='urgente'?[192,57,43]:u==='importante'?[200,120,60]:[42,112,73]));}
+      }
+    },
+    didDrawPage:footer,
+  });
+
+  // ── MINI HISTÓRICO ──
+  const comHist=tickets.filter(t=>t.history&&t.history.filter(h=>h.status!=='chat').length>1);
+  if(comHist.length){
+    doc.addPage();
+    doc.setFillColor(13,36,25);doc.rect(0,0,pw,18,'F');
+    doc.setFont('helvetica','bold');doc.setFontSize(12);doc.setTextColor(255,255,255);
+    doc.text('Historico Detalhado dos Chamados',pw/2,12,{align:'center'});
+    let curY=24;
+    comHist.forEach(t=>{
+      if(curY>180){doc.addPage();curY=14;}
+      doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(42,112,73);
+      doc.text(`${t.proto}  ${cleanTxt(t.titulo)}`,14,curY);
+      curY+=5;
+      const realH=t.history.filter(h=>h.status!=='chat');
+      doc.autoTable({
+        startY:curY,
+        head:[['Data','Status','Feito por','Observacao']],
+        body:realH.map(h=>[fmtDT(h.ts),stLbl(h.status),cleanTxt(h.by)||'--',cleanTxt(h.obs)||'--']),
+        theme:'grid',
+        styles:{font:'helvetica',fontSize:7,cellPadding:{top:2,bottom:2,left:3,right:3},overflow:'linebreak',textColor:[30,50,40]},
+        headStyles:{fillColor:[22,54,38],textColor:[255,255,255],fontStyle:'bold',fontSize:7.5},
+        alternateRowStyles:{fillColor:[245,250,247]},
+        columnStyles:{0:{cellWidth:28},1:{cellWidth:22},2:{cellWidth:24},3:{cellWidth:'auto'}},
+        didDrawPage:footer,
+        margin:{left:14,right:14},
+      });
+      curY=doc.lastAutoTable.finalY+8;
+    });
+  }
+
   doc.save(`relatorio-chamados-${todayFile}.pdf`);
-  showToast('✅ Relatório PDF exportado!');
+  showToast('✅ Relatorio PDF exportado!');
 }
+
+/* ═══ PWA + OFFLINE QUEUE ═══ */
+let deferredPrompt=null;
+const LS_Q='fru_offline_queue';
+
+// Registrar Service Worker
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').then(reg=>{
+    console.log('SW registrado');
+    // Escutar mensagem SYNC_NOW do SW
+    navigator.serviceWorker.addEventListener('message',e=>{
+      if(e.data&&e.data.type==='SYNC_NOW')syncOfflineQueue();
+    });
+  }).catch(e=>console.log('SW erro:',e));
+}
+
+// Capturar evento de instalação
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault();deferredPrompt=e;
+  // Só mostrar se não estiver rodando como PWA instalado
+  if(window.matchMedia('(display-mode: standalone)').matches)return;
+  document.getElementById('pwa-banner').classList.add('show');
+});
+
+function installPWA(){
+  if(!deferredPrompt)return;
+  deferredPrompt.prompt();
+  deferredPrompt.userChoice.then(()=>{
+    deferredPrompt=null;
+    document.getElementById('pwa-banner').classList.remove('show');
+  });
+}
+
+// Fila offline
+function getQueue(){try{return JSON.parse(localStorage.getItem(LS_Q)||'[]');}catch{return[];}}
+function saveQueue(q){localStorage.setItem(LS_Q,JSON.stringify(q));}
+function addToQueue(item){const q=getQueue();q.push(item);saveQueue(q);updateQueueIndicator();}
+function updateQueueIndicator(){
+  const q=getQueue();
+  const el=document.getElementById('offline-queue');
+  if(!el)return;
+  if(q.length>0){el.style.display='block';el.textContent=`📴 ${q.length} chamado${q.length>1?'s':''} na fila offline`;}
+  else{el.style.display='none';}
+}
+
+async function syncOfflineQueue(){
+  const q=getQueue();
+  if(!q.length)return;
+  const remaining=[];
+  for(const item of q){
+    try{
+      if(item.type==='chamado'){
+        const{data}=await sb.from('chamados').insert([item.payload]).select().single();
+        if(data){
+          await sb.from('historico').insert([{chamado_id:data.id,status:'aberto',obs:'Chamado aberto (sincronizado offline)',feito_por:item.payload.criado_nome,feito_em:item.payload.criado_em}]);
+          // Atualizar id local
+          const tk=tickets.find(t=>t.proto===item.payload.proto);
+          if(tk)tk.id=data.id;
+          saveLS(LS_T,tickets);
+        }
+      }else if(item.type==='status'){
+        await sb.from('chamados').update({status:item.payload.status}).eq('id',item.chamadoId);
+        await sb.from('historico').insert([item.payload]);
+      }
+      setSbStatus(true);
+    }catch(e){remaining.push(item);}
+  }
+  saveQueue(remaining);
+  updateQueueIndicator();
+  if(remaining.length<q.length){
+    showToast(`✅ ${q.length-remaining.length} item(ns) sincronizado(s)!`);
+    renderTks();if(cu&&cu.perfil==='Gestor')renderDash();
+  }
+}
+
+// Detectar quando volta a internet e sincronizar
+window.addEventListener('online',()=>{
+  setSbStatus(false);
+  setTimeout(syncOfflineQueue,1500);
+});
+window.addEventListener('offline',()=>setSbStatus(false));
+
+// Ao iniciar, tentar sincronizar pendentes
+window.addEventListener('load',()=>{
+  updateQueueIndicator();
+  if(navigator.onLine)setTimeout(syncOfflineQueue,3000);
+});
 
 /* ═══ TOAST ═══ */
 let _tt;
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(_tt);_tt=setTimeout(()=>t.classList.remove('show'),3200);}
-
-/* ═══ AUTO LOGIN ═══ */
-if(cu){enterApp();}
-</script>
 
 /* ═══ AUTO LOGIN ═══ */
 if(cu){enterApp();}
