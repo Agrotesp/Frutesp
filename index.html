@@ -473,7 +473,7 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
       </div>
       <div id="foto-skip" style="display:none;font-size:12px;color:var(--t4)">Sem foto.</div>
       <div id="foto-input-wrap" style="display:none;margin-top:8px">
-        <input type="file" id="nfoto" accept="image/*" capture="environment" onchange="previewFoto(this)" style="display:none">
+        <input type="file" id="nfoto" accept="image/*" onchange="previewFoto(this)" style="display:none">
         <button type="button" class="btn bg bsm" style="width:100%" onclick="document.getElementById('nfoto').click()">📷 Escolher / Tirar foto</button>
         <img id="foto-preview" src="" style="display:none;width:100%;border-radius:var(--rs);margin-top:8px;max-height:200px;object-fit:cover">
       </div>
