@@ -290,7 +290,9 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
         <select id="rst">
           <option>Campo</option><option>Irrigação</option><option>Mecânica</option>
           <option>Packing House</option><option>Almoxarifado</option>
-          <option>Drone</option><option>Mel</option><option>Outro</option>
+          <option>Drone</option><option>Mel</option>
+          <option value="Mel/Drone">Mel e Drone (responsável pelos dois)</option>
+          <option>Outro</option>
         </select></div>
       <button class="btn bp" onclick="doReg()" style="margin-top:6px">Criar Conta</button>
     </div>
@@ -439,7 +441,21 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
         <option>Campo</option><option>Irrigação</option><option>Mecânica</option>
         <option>Packing House</option><option>Almoxarifado</option>
         <option>Drone</option><option>Mel</option>
-      </select></div>
+      </select>
+      <div id="nset-meldrone" style="display:none;margin-top:8px">
+        <div style="font-size:11px;color:var(--t4);font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px">Este chamado é referente a:</div>
+        <div style="display:flex;gap:8px">
+          <button type="button" id="btn-sel-mel" onclick="selecionarSetorMD('Mel')"
+            style="flex:1;padding:10px;border-radius:var(--rs);border:1.5px solid var(--b2);background:var(--g900);color:var(--t2);font-family:var(--fb);font-size:13px;font-weight:700;cursor:pointer;transition:all .18s">
+            🍯 Mel
+          </button>
+          <button type="button" id="btn-sel-drone" onclick="selecionarSetorMD('Drone')"
+            style="flex:1;padding:10px;border-radius:var(--rs);border:1.5px solid var(--b2);background:var(--g900);color:var(--t2);font-family:var(--fb);font-size:13px;font-weight:700;cursor:pointer;transition:all .18s">
+            🚁 Drone
+          </button>
+        </div>
+      </div>
+    </div>
     <div class="fg"><label>Tipo de chamado *</label>
       <select id="ntip">
         <option value="">— Selecione o tipo —</option>
@@ -495,7 +511,10 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
   <button class="btn bp bsm" style="flex-shrink:0" onclick="installPWA()">Instalar</button>
   <button onclick="document.getElementById('pwa-banner').classList.remove('show')" style="background:none;border:none;color:var(--t4);font-size:18px;cursor:pointer;padding:0">✕</button>
 </div>
-<div id="offline-queue"></div>
+<div id="offline-queue" style="display:none;position:fixed;top:60px;left:50%;transform:translateX(-50%);background:var(--g800);border:1px solid var(--ora);color:var(--ora);padding:7px 8px 7px 14px;border-radius:20px;font-size:12px;font-weight:700;z-index:200;display:none;align-items:center;gap:8px;white-space:nowrap">
+  <span id="offline-queue-txt"></span>
+  <button onclick="manualSync()" style="background:var(--ora);color:#000;border:none;border-radius:12px;padding:4px 10px;font-size:11px;font-weight:800;cursor:pointer">↺ Sincronizar</button>
+</div>
 
 <script>
 /* ═══ SUPABASE ═══ */
@@ -844,15 +863,34 @@ function renderTks(){
   if(nb){nb.textContent=abertos;nb.style.display=abertos>0?'flex':'none';}
 }
 
+/* ═══ SEL SETOR MEL/DRONE ═══ */
+let _setorMDselecionado=null;
+function selecionarSetorMD(setor){
+  _setorMDselecionado=setor;
+  ['mel','drone'].forEach(s=>{
+    const btn=document.getElementById('btn-sel-'+s);
+    if(btn){btn.style.background=s===setor.toLowerCase()?'var(--g600)':'var(--g900)';btn.style.borderColor=s===setor.toLowerCase()?'var(--g300)':'var(--b2)';btn.style.color=s===setor.toLowerCase()?'var(--t1)':'var(--t2)';}
+  });
+}
+function onSetorChange(){
+  const v=document.getElementById('nset').value;
+  const md=document.getElementById('nset-meldrone');
+  if(cu&&cu.setor==='Mel/Drone'&&(v===''||v==='Mel'||v==='Drone')){
+    // Se é usuário Mel/Drone, esconder o select e mostrar os botões
+  }
+  if(md){md.style.display=(cu&&cu.setor==='Mel/Drone'&&!v)?'block':'none';}
+}
+
 /* ═══ NEW TICKET ═══ */
 async function submitTk(){
   const tit=document.getElementById('ntit').value.trim();
   const urg=document.getElementById('nurg').value;
-  const set=document.getElementById('nset').value;
   const tip=document.getElementById('ntip').value;
+  const isMD=cu&&cu.setor==='Mel/Drone';
+  const set=isMD?_setorMDselecionado:document.getElementById('nset').value;
   if(!tit){showToast('⚠️ Informe o título!');return;}
   if(!urg){showToast('⚠️ Selecione a urgência!');return;}
-  if(!set){showToast('⚠️ Selecione o setor!');return;}
+  if(!set){showToast(isMD?'⚠️ Escolha: Mel ou Drone!':'⚠️ Selecione o setor!');return;}
   if(!tip){showToast('⚠️ Selecione o tipo!');return;}
 
   const checked=[...document.querySelectorAll('#nresp-list input[type=checkbox]:checked')];
@@ -885,7 +923,9 @@ async function submitTk(){
   tickets.unshift(t);saveLS(LS_T,tickets);
   closeM('mticket');
   ['ntit','ndesc'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('nset').value='';document.getElementById('ntip').value='';document.getElementById('nurg').value='';
+  const _nset=document.getElementById('nset');if(_nset)_nset.value='';
+  document.getElementById('ntip').value='';document.getElementById('nurg').value='';
+  _setorMDselecionado=null;
   document.querySelectorAll('#nresp-list input[type=checkbox]').forEach(c=>c.checked=false);
   showToast(`✅ ${t.proto} aberto!`);
   renderTks();if(cu.perfil==='Gestor')renderDash();
@@ -1088,6 +1128,26 @@ function openAlterarDecisao(){
 
 /* ═══ USERS ═══ */
 function openM(id){
+  if(id==='mticket'){
+    // Setup Mel/Drone selector
+    const isMD=cu&&cu.setor==='Mel/Drone';
+    const nsetEl=document.getElementById('nset');
+    const mdDiv=document.getElementById('nset-meldrone');
+    _setorMDselecionado=null;
+    if(isMD){
+      // Esconder o select padrão, mostrar os botões de escolha
+      nsetEl.style.display='none';
+      if(mdDiv)mdDiv.style.display='block';
+      // Resetar botões
+      ['mel','drone'].forEach(s=>{
+        const btn=document.getElementById('btn-sel-'+s);
+        if(btn){btn.style.background='var(--g900)';btn.style.borderColor='var(--b2)';btn.style.color='var(--t2)';}
+      });
+    }else{
+      nsetEl.style.display='';
+      if(mdDiv)mdDiv.style.display='none';
+    }
+  }
   if(id==='musers'){
     document.getElementById('ulist').innerHTML=users.map(u=>
       `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--b1)">
@@ -1287,9 +1347,36 @@ function addToQueue(item){const q=getQueue();q.push(item);saveQueue(q);updateQue
 function updateQueueIndicator(){
   const q=getQueue();
   const el=document.getElementById('offline-queue');
+  const txt=document.getElementById('offline-queue-txt');
   if(!el)return;
-  if(q.length>0){el.style.display='block';el.textContent=`📴 ${q.length} chamado${q.length>1?'s':''} na fila offline`;}
-  else{el.style.display='none';}
+  if(q.length>0){
+    el.style.display='flex';
+    if(txt)txt.textContent=`📴 ${q.length} chamado${q.length>1?'s':''} aguardando`;
+  }else{
+    el.style.display='none';
+  }
+}
+
+async function manualSync(){
+  const btn=document.querySelector('#offline-queue button');
+  if(btn){btn.textContent='Sincronizando...';btn.disabled=true;}
+  try{
+    await syncOfflineQueue();
+    // Recarregar dados do Supabase sem perder sessão
+    try{
+      const{data:chamados}=await sb.from('chamados').select('*').order('criado_em',{ascending:false});
+      const{data:hist}=await sb.from('historico').select('*').order('feito_em',{ascending:true});
+      if(chamados){tickets=chamados.map(c=>mapChamado(c,hist||[]));if(tickets.length)seq=Math.max(seq,...tickets.map(t=>typeof t.id==='number'?t.id:0));saveLS(LS_T,tickets);}
+      const{data:usrs}=await sb.from('usuarios').select('*');
+      if(usrs){users=usrs.map(mapUser);saveLS(LS_U,users);}
+      setSbStatus(true);
+      renderTks();if(cu&&cu.perfil==='Gestor')renderDash();
+      showToast('✅ Dados sincronizados!');
+    }catch(e){showToast('⚠️ Sem internet ainda.');}
+  }finally{
+    if(btn){btn.textContent='↺ Sincronizar';btn.disabled=false;}
+    updateQueueIndicator();
+  }
 }
 
 async function syncOfflineQueue(){
