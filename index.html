@@ -219,6 +219,13 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
 .notif-banner.show{display:block}
 .notif-banner.urg{border-color:rgba(232,79,79,.5);background:#1a0a0a}
 @keyframes slideDown{from{transform:translateX(-50%) translateY(-20px);opacity:0}to{transform:translateX(-50%) translateY(0);opacity:1}}
+/* ALERTAS */
+.alert-card{background:var(--card);border:1px solid rgba(232,79,79,.35);border-left:4px solid var(--red);border-radius:var(--r);padding:12px 14px;margin-bottom:8px;cursor:pointer;transition:all .18s}
+.alert-card:hover{background:var(--card2)}
+.alert-card.warn{border-color:rgba(212,184,64,.35);border-left-color:var(--yel)}
+.alert-title{font-size:13px;font-weight:700;color:var(--t1);margin-bottom:3px}
+.alert-sub{font-size:11.5px;color:var(--t3)}
+@keyframes slideDown{from{transform:translateX(-50%) translateY(-20px);opacity:0}to{transform:translateX(-50%) translateY(0);opacity:1}}
 .notif-dot{position:absolute;top:-3px;right:-3px;width:10px;height:10px;background:var(--red);border-radius:50%;border:2px solid var(--g950)}
 /* FOTO NO CHAMADO */
 #d-foto-sec img{width:100%;border-radius:var(--rs);margin-top:8px;max-height:280px;object-fit:cover}
