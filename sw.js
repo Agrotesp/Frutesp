@@ -1,77 +1,63 @@
-const CACHE_NAME = ‘frutesp-v3’;
-const BASE = ‘/Frutesp/’;
+const CACHE_NAME = 'frutesp-v4';
+const BASE = '/Frutesp/';
+
 const ASSETS = [
-BASE,
-BASE + ‘index.html’,
-BASE + ‘manifest.json’,
+  BASE,
+  BASE + 'index.html',
+  BASE + 'manifest.json',
 ];
 
-self.addEventListener(‘install’, e => {
-e.waitUntil(
-caches.open(CACHE_NAME).then(cache =>
-Promise.allSettled(ASSETS.map(url => cache.add(url)))
-)
-);
-self.skipWaiting();
+// INSTALL
+self.addEventListener('install', e => {
+  e.waitUntil(
+    caches.open(CACHE_NAME).then(cache =>
+      cache.addAll(ASSETS)
+    )
+  );
+  self.skipWaiting();
 });
 
-self.addEventListener(‘activate’, e => {
-e.waitUntil(
-caches.keys().then(keys =>
-Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-)
-);
-self.clients.claim();
+// ACTIVATE
+self.addEventListener('activate', e => {
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys
+        .filter(k => k !== CACHE_NAME)
+        .map(k => caches.delete(k))
+      )
+    )
+  );
+  self.clients.claim();
 });
 
-self.addEventListener(‘fetch’, e => {
-const url = new URL(e.request.url);
+// FETCH
+self.addEventListener('fetch', e => {
+  const req = e.request;
+  const url = new URL(req.url);
 
-if (url.hostname.includes(‘supabase.co’)) {
-e.respondWith(fetch(e.request).catch(() =>
-new Response(’{“error”:“offline”}’, {headers:{‘Content-Type’:‘application/json’}})
-));
-return;
-}
+  // 🔴 SUPABASE → SEM CACHE
+  if (url.hostname.includes('supabase.co')) {
+    e.respondWith(
+      fetch(req).catch(() => {
+        return new Response(
+          JSON.stringify({ error: 'offline' }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      })
+    );
+    return;
+  }
 
-if (!url.hostname.includes(‘github.io’)) {
-e.respondWith(
-caches.match(e.request).then(cached => cached || fetch(e.request).then(res => {
-if (res && res.status === 200) {
-const clone = res.clone();
-caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
-}
-return res;
-}).catch(() => caches.match(e.request)))
-);
-return;
-}
-
-e.respondWith(
-fetch(e.request).then(res => {
-if (res && res.status === 200) {
-const clone = res.clone();
-caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
-}
-return res;
-}).catch(() =>
-caches.match(e.request).then(cached =>
-cached || caches.match(BASE + ‘index.html’) || caches.match(BASE)
-)
-)
-);
-});
-
-self.addEventListener(‘sync’, e => {
-if (e.tag === ‘sync-chamados’) {
-e.waitUntil(
-self.clients.matchAll().then(clients =>
-clients.forEach(c => c.postMessage({type:‘SYNC_NOW’}))
-)
-);
-}
-});
-
-self.addEventListener(‘message’, e => {
-if (e.data && e.data.type === ‘SKIP_WAITING’) self.skipWaiting();
+  // 🟢 APP SHELL → CACHE FIRST
+  e.respondWith(
+    caches.match(req).then(cached => {
+      return cached || fetch(req).then(res => {
+        if (res && res.status === 200) {
+          const clone = res.clone();
+          caches.open(CACHE_NAME).then(c => c.put(req, clone));
+        }
+        return res;
+      }).catch(() => caches.match(BASE + 'index.html'));
+    })
+  );
 });
