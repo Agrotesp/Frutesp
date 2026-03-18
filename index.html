@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -564,15 +563,101 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
 </div>
 
 <script>
+/* ════════════════════════════════════════════
+   FRUTESP — OFFLINE-FIRST ARCHITECTURE v2
+   ════════════════════════════════════════════ */
+
 /* ═══ SUPABASE ═══ */
 const SB_URL='https://xarlbbmjuecgzzhfrqqj.supabase.co';
 const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhhcmxiYm1qdWVjZ3p6aGZycXFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxODUwNTEsImV4cCI6MjA4ODc2MTA1MX0.usCyEwTKExiEnPxxOnuLeGthHYJgdEpOy-_tehkH1vU';
 const sb=supabase.createClient(SB_URL,SB_KEY);
 let sbOnline=false;
-function setSbStatus(ok){sbOnline=ok;const el=document.getElementById('sb-status');if(el){el.textContent=ok?'🟢':'🔴';el.title=ok?'Conectado ao Supabase':'Offline — dados locais';}}
+function setSbStatus(ok){
+  sbOnline=ok;
+  const el=document.getElementById('sb-status');
+  if(el){el.textContent=ok?'🟢':'🔴';el.title=ok?'Conectado ao Supabase':'Offline — dados locais';}
+}
 
-/* ═══ LOCAL STORAGE ═══ */
-const LS_U='fru_users',LS_T='fru_tickets',LS_CU='fru_cu';
+/* ═══ INDEXEDDB — camada de persistência principal ═══ */
+const DB_NAME='frutesp_db', DB_VER=2;
+let _db=null;
+
+function openDB(){
+  return new Promise((res,rej)=>{
+    if(_db){res(_db);return;}
+    const req=indexedDB.open(DB_NAME,DB_VER);
+    req.onupgradeneeded=e=>{
+      const db=e.target.result;
+      // Tickets com flag synced
+      if(!db.objectStoreNames.contains('tickets')){
+        const ts=db.createObjectStore('tickets',{keyPath:'localId'});
+        ts.createIndex('remoteId','remoteId',{unique:false});
+        ts.createIndex('synced','synced',{unique:false});
+      }
+      // Fila de sincronização
+      if(!db.objectStoreNames.contains('syncQueue')){
+        const qs=db.createObjectStore('syncQueue',{keyPath:'queueId',autoIncrement:true});
+        qs.createIndex('status','status',{unique:false});
+      }
+      // Histórico offline
+      if(!db.objectStoreNames.contains('history')){
+        db.createObjectStore('history',{keyPath:'histId',autoIncrement:true});
+      }
+    };
+    req.onsuccess=e=>{_db=e.target.result;res(_db);};
+    req.onerror=e=>rej(e.target.error);
+  });
+}
+
+/* helpers IDB genéricos */
+async function idbGetAll(store){
+  const db=await openDB();
+  return new Promise((res,rej)=>{
+    const tx=db.transaction(store,'readonly');
+    const req=tx.objectStore(store).getAll();
+    req.onsuccess=()=>res(req.result||[]);
+    req.onerror=()=>rej(req.error);
+  });
+}
+async function idbPut(store,obj){
+  const db=await openDB();
+  return new Promise((res,rej)=>{
+    const tx=db.transaction(store,'readwrite');
+    const req=tx.objectStore(store).put(obj);
+    req.onsuccess=()=>res(req.result);
+    req.onerror=()=>rej(req.error);
+  });
+}
+async function idbDelete(store,key){
+  const db=await openDB();
+  return new Promise((res,rej)=>{
+    const tx=db.transaction(store,'readwrite');
+    const req=tx.objectStore(store).delete(key);
+    req.onsuccess=()=>res();
+    req.onerror=()=>rej(req.error);
+  });
+}
+async function idbGet(store,key){
+  const db=await openDB();
+  return new Promise((res,rej)=>{
+    const tx=db.transaction(store,'readonly');
+    const req=tx.objectStore(store).get(key);
+    req.onsuccess=()=>res(req.result);
+    req.onerror=()=>rej(req.error);
+  });
+}
+async function idbClear(store){
+  const db=await openDB();
+  return new Promise((res,rej)=>{
+    const tx=db.transaction(store,'readwrite');
+    const req=tx.objectStore(store).clear();
+    req.onsuccess=()=>res();
+    req.onerror=()=>rej(req.error);
+  });
+}
+
+/* ═══ LOCAL STORAGE (sessão e usuários apenas) ═══ */
+const LS_U='fru_users',LS_CU='fru_cu';
 const saveLS=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
 const loadLS=k=>{try{const d=localStorage.getItem(k);return d?JSON.parse(d):null;}catch(e){return null;}};
 
@@ -594,17 +679,16 @@ const TIPOS_AUTH=['servico_campo','controle_campo'];
 const URGENCIA={normal:{lbl:'Normal',cls:'urg-normal'},importante:{lbl:'Importante',cls:'urg-importante'},urgente:{lbl:'Urgente',cls:'urg-urgente'}};
 const AGING=[{d:0,c:'#45b175',lbl:'Em dia',msg:'Chamado recém aberto',ico:'🟢'},{d:3,c:'#d4b840',lbl:'Atenção',msg:'Verificar andamento',ico:'🟡'},{d:7,c:'#e84f4f',lbl:'CRÍTICO',msg:'Ação imediata necessária!',ico:'🔴'}];
 const MESES=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+const MAX_RETRIES=5;
 
 /* ═══ STATE ═══ */
 let users=loadLS(LS_U)||[];
-let tickets=loadLS(LS_T)||[];
+let tickets=[]; // carregado do IDB
 let cu=loadLS(LS_CU)||null;
 let curTkId=null;
 let filt={setor:'todos',status:'todos'};
 let seq=1000;
-let notifCount=0;
-let notifCurId=null;
-let chartMensal=null;
+let notifCount=0,notifCurId=null,chartMensal=null;
 
 /* ═══ UTILS ═══ */
 const dias=ts=>Math.floor((Date.now()-ts)/86400000);
@@ -616,21 +700,232 @@ const isAuth=tipo=>TIPOS_AUTH.includes(tipo);
 const fmtD=ts=>new Date(ts).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});
 const fmtDT=ts=>new Date(ts).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
 const avOf=n=>n.trim().split(/\s+/).map(p=>p[0].toUpperCase()).slice(0,2).join('');
-function fmtDur(ms){const mins=Math.round(ms/60000);if(mins<60)return`${mins}min`;const h=Math.floor(mins/60);if(h<24)return`${h}h`;const d=Math.floor(h/24);const rh=h%24;return rh>0?`${d}d ${rh}h`:`${d}d`;}
-function lastHistTs(t){if(!t.history||!t.history.length)return t.criadoEm;return Math.max(...t.history.map(h=>h.ts));}
+function fmtDur(ms){const m=Math.round(ms/60000);if(m<60)return`${m}min`;const h=Math.floor(m/60);if(h<24)return`${h}h`;const d=Math.floor(h/24);const rh=h%24;return rh?`${d}d ${rh}h`:`${d}d`;}
+function lastHistTs(t){if(!t.history?.length)return t.criadoEm;return Math.max(...t.history.map(h=>h.ts));}
+function genLocalId(){return 'local_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);}
+
+/* ═══ IDB TICKET HELPERS ═══ */
+async function idbSaveTicket(t){await idbPut('tickets',t);}
+async function idbLoadTickets(){return await idbGetAll('tickets');}
+async function idbUpdateTicketField(localId,fields){
+  const t=await idbGet('tickets',localId);
+  if(!t)return;
+  Object.assign(t,fields);
+  await idbPut('tickets',t);
+}
+
+/* ═══ SYNC QUEUE ═══ */
+async function queueAdd(action){
+  /* action: { type:'CREATE'|'UPDATE_STATUS'|'CHAT', payload, localId, remoteId? } */
+  await idbPut('syncQueue',{
+    ...action,
+    status:'pending',
+    retries:0,
+    createdAt:Date.now(),
+  });
+  updateQueueIndicator();
+  // Pedir background sync ao SW
+  if('serviceWorker' in navigator&&'SyncManager' in window){
+    const reg=await navigator.serviceWorker.ready;
+    try{await reg.sync.register('sync-chamados');}catch(e){}
+  }
+}
+async function queueGetPending(){
+  const all=await idbGetAll('syncQueue');
+  return all.filter(i=>i.status==='pending'&&i.retries<MAX_RETRIES);
+}
+async function queueMarkDone(queueId){await idbDelete('syncQueue',queueId);}
+async function queueMarkFailed(item){
+  item.retries=(item.retries||0)+1;
+  item.status=item.retries>=MAX_RETRIES?'failed':'pending';
+  item.lastError=new Date().toISOString();
+  await idbPut('syncQueue',item);
+}
+async function queueCount(){
+  const all=await idbGetAll('syncQueue');
+  return all.filter(i=>i.status==='pending').length;
+}
+
+/* ═══ SYNC ENGINE ═══ */
+let _syncing=false;
+async function syncEngine(){
+  if(_syncing||!navigator.onLine)return;
+  _syncing=true;
+  try{
+    const pending=await queueGetPending();
+    if(!pending.length){_syncing=false;return;}
+
+    let synced=0;
+    for(const item of pending){
+      try{
+        if(item.type==='CREATE'){
+          // Verificar se já existe no servidor (evitar duplicata)
+          const{data:exists}=await sb.from('chamados')
+            .select('id').eq('proto',item.payload.proto).maybeSingle();
+          
+          let remoteId;
+          if(exists){
+            remoteId=exists.id;
+          }else{
+            const{data,error}=await sb.from('chamados')
+              .insert([item.payload]).select().single();
+            if(error)throw error;
+            remoteId=data.id;
+            // Inserir histórico inicial
+            await sb.from('historico').insert([{
+              chamado_id:remoteId,
+              status:'aberto',
+              obs:'Chamado aberto'+(item.offlineNote?' (offline)':''),
+              feito_por:item.payload.criado_nome,
+              feito_em:item.payload.criado_em
+            }]);
+          }
+          // Atualizar ticket local com remoteId real e marcar synced
+          await idbUpdateTicketField(item.localId,{
+            remoteId,
+            id:remoteId,
+            synced:true,
+            syncedAt:Date.now()
+          });
+          // Atualizar tickets em memória
+          const idx=tickets.findIndex(t=>t.localId===item.localId);
+          if(idx>=0){tickets[idx].id=remoteId;tickets[idx].remoteId=remoteId;tickets[idx].synced=true;}
+
+        }else if(item.type==='UPDATE_STATUS'){
+          const{error}=await sb.from('chamados')
+            .update({status:item.payload.status}).eq('id',item.remoteId);
+          if(error)throw error;
+          await sb.from('historico').insert([{
+            chamado_id:item.remoteId,
+            status:item.payload.status,
+            obs:item.payload.obs||null,
+            feito_por:item.payload.feito_por,
+            feito_em:item.payload.feito_em
+          }]);
+
+        }else if(item.type==='CHAT'){
+          await sb.from('historico').insert([{
+            chamado_id:item.remoteId,
+            status:'chat',
+            obs:item.payload.obs,
+            feito_por:item.payload.feito_por,
+            feito_em:item.payload.feito_em
+          }]);
+        }
+
+        await queueMarkDone(item.queueId);
+        synced++;
+        setSbStatus(true);
+
+      }catch(err){
+        console.warn('[SYNC] Falhou item',item.queueId,err);
+        await queueMarkFailed(item);
+      }
+    }
+
+    if(synced>0){
+      showToast(`✅ ${synced} item(ns) sincronizado(s)!`);
+      await mergeWithServer();
+      renderTks();
+      if(cu?.perfil==='Gestor')renderDash();
+    }
+  }finally{
+    _syncing=false;
+    updateQueueIndicator();
+  }
+}
+
+/* ═══ MERGE — combina local + servidor sem perder dados não sincronizados ═══ */
+async function mergeWithServer(){
+  try{
+    const{data:remoteChamados}=await sb.from('chamados')
+      .select('*').order('criado_em',{ascending:false});
+    const{data:remoteHist}=await sb.from('historico')
+      .select('*').order('feito_em',{ascending:true});
+    if(!remoteChamados)return;
+
+    const local=await idbLoadTickets();
+    // Tickets locais não sincronizados — preservar
+    const unsyncedLocal=local.filter(t=>!t.synced);
+    
+    // Converter remotos para formato interno
+    const remoteTickets=remoteChamados.map(c=>mapChamado(c,remoteHist||[]));
+    // Atualizar seq
+    if(remoteTickets.length)
+      seq=Math.max(seq,...remoteTickets.map(t=>typeof t.id==='number'?t.id:0));
+
+    // Merge: remoto como base + locais não sincronizados que não têm correspondente remoto
+    const remoteIds=new Set(remoteTickets.map(t=>t.id));
+    const onlyLocal=unsyncedLocal.filter(t=>!t.remoteId||!remoteIds.has(t.remoteId));
+
+    // Salvar remotos no IDB
+    for(const t of remoteTickets){
+      const existing=local.find(l=>l.remoteId===t.id||l.localId===String(t.id));
+      await idbPut('tickets',{
+        ...t,
+        localId:existing?.localId||String(t.id),
+        remoteId:t.id,
+        synced:true,
+      });
+    }
+    // Manter não sincronizados
+    for(const t of onlyLocal){
+      await idbPut('tickets',{...t,synced:false});
+    }
+
+    tickets=[...remoteTickets,...onlyLocal];
+    setSbStatus(true);
+  }catch(e){
+    setSbStatus(false);
+    // Fallback: usar o que está no IDB
+    tickets=await idbLoadTickets();
+  }
+}
 
 /* ═══ SB HELPERS ═══ */
 function mapChamado(c,historico){
-  return{id:c.id,proto:c.proto,titulo:c.titulo,setor:c.setor,tipo:c.tipo,
-    desc:c.descricao,status:c.status,urgencia:c.urgencia||'normal',foto:c.foto||null,
-    responsavel:c.responsavel,responsavelIds:c.responsavel_ids||[],
-    criadoPor:c.criado_por_email,criadoNome:c.criado_nome,
+  return{
+    id:c.id, localId:String(c.id), remoteId:c.id,
+    synced:true,
+    proto:c.proto, titulo:c.titulo, setor:c.setor, tipo:c.tipo,
+    desc:c.descricao, status:c.status, urgencia:c.urgencia||'normal', foto:c.foto||null,
+    responsavel:c.responsavel, responsavelIds:c.responsavel_ids||[],
+    criadoPor:c.criado_por_email, criadoNome:c.criado_nome,
     criadoEm:new Date(c.criado_em).getTime(),
     history:(historico||[]).filter(h=>h.chamado_id===c.id)
       .sort((a,b)=>new Date(a.feito_em)-new Date(b.feito_em))
-      .map(h=>({status:h.status,ts:new Date(h.feito_em).getTime(),by:h.feito_por,obs:h.obs}))};
+      .map(h=>({status:h.status,ts:new Date(h.feito_em).getTime(),by:h.feito_por,obs:h.obs}))
+  };
 }
 function mapUser(u){return{id:u.id,nome:u.nome,email:u.email,senha:u.senha||'',perfil:u.perfil,setor:u.setor,av:u.av||avOf(u.nome)};}
+
+/* ═══ QUEUE INDICATOR ═══ */
+async function updateQueueIndicator(){
+  const cnt=await queueCount();
+  const el=document.getElementById('offline-queue');
+  const txt=document.getElementById('offline-queue-txt');
+  if(!el)return;
+  if(cnt>0){el.style.display='flex';if(txt)txt.textContent=`${cnt} chamado${cnt>1?'s':''} aguardando`;}
+  else el.style.display='none';
+}
+
+async function manualSync(){
+  const btn=document.querySelector('#offline-queue button');
+  if(btn){btn.textContent='Sincronizando...';btn.disabled=true;}
+  try{
+    await syncEngine();
+    if(navigator.onLine){
+      await mergeWithServer();
+      // Recarregar usuários
+      const{data:usrs}=await sb.from('usuarios').select('*');
+      if(usrs){users=usrs.map(mapUser);saveLS(LS_U,users);}
+      setSbStatus(true);
+      renderTks();if(cu?.perfil==='Gestor')renderDash();
+      showToast('Dados sincronizados!');
+    }else{showToast('Sem internet — dados locais mantidos.');}
+  }catch(e){showToast('Erro na sincronização.');}
+  finally{if(btn){btn.textContent='Sincronizar';btn.disabled=false;}updateQueueIndicator();}
+}
 
 /* ═══ AUTH ═══ */
 function showTab(id,el){
@@ -672,8 +967,9 @@ async function doReg(){
     if(data){users.push(mapUser(data));saveLS(LS_U,users);showToast('Conta criada! Faça login.');showTab('tlogin',document.querySelectorAll('.ltab')[0]);['rn','re','rs'].forEach(id=>document.getElementById(id).value='');if(btn){btn.textContent='Criar Conta';btn.disabled=false;}return;}
   }catch(e){setSbStatus(false);}
   if(users.find(u=>u.email===email)){err.textContent='E-mail já cadastrado.';err.style.display='block';if(btn){btn.textContent='Criar Conta';btn.disabled=false;}return;}
-  users.push({id:Date.now(),nome,email,senha,perfil:'Solicitante',setor,av:avOf(nome)});
-  saveLS(LS_U,users);showToast('Conta criada (local)! Faça login.');
+  const nu={id:Date.now(),nome,email,senha,perfil:'Solicitante',setor,av:avOf(nome)};
+  users.push(nu);saveLS(LS_U,users);
+  showToast('Conta criada! Faça login.');
   showTab('tlogin',document.querySelectorAll('.ltab')[0]);
   ['rn','re','rs'].forEach(id=>document.getElementById(id).value='');
   if(btn){btn.textContent='Criar Conta';btn.disabled=false;}
@@ -693,17 +989,31 @@ async function initApp(){
   document.getElementById('btnusers').style.display=p==='Gestor'?'flex':'none';
   document.getElementById('fab').style.display='flex';
   setSbStatus(false);
-  try{const{data}=await sb.from('usuarios').select('*');if(data){users=data.map(mapUser);saveLS(LS_U,users);setSbStatus(true);}}catch(e){users=loadLS(LS_U)||users;}
-  try{
-    const{data:chamados}=await sb.from('chamados').select('*').order('criado_em',{ascending:false});
-    const{data:hist}=await sb.from('historico').select('*').order('feito_em',{ascending:true});
-    if(chamados){tickets=chamados.map(c=>mapChamado(c,hist||[]));if(tickets.length)seq=Math.max(seq,...tickets.map(t=>typeof t.id==='number'?t.id:0));saveLS(LS_T,tickets);setSbStatus(true);}
-  }catch(e){tickets=loadLS(LS_T)||tickets;}
+
+  // Carregar do IDB primeiro (imediato, sem esperar rede)
+  tickets=await idbLoadTickets();
   buildNav();buildFilters();refreshRespSel();
-  if(p==='Gestor'){renderDash();navTo('dashboard');checkRelatorioAutomatico();}
-  else navTo('chamados');
+  if(p==='Gestor'){renderDash();navTo('dashboard');}else navTo('chamados');
   renderTks();
+  updateQueueIndicator();
+
+  // Carregar usuários
+  try{
+    const{data}=await sb.from('usuarios').select('*');
+    if(data){users=data.map(mapUser);saveLS(LS_U,users);setSbStatus(true);}
+  }catch(e){users=loadLS(LS_U)||users;}
+
+  // Merge com servidor (não bloqueia UI)
+  if(navigator.onLine){
+    mergeWithServer().then(()=>{
+      renderTks();if(p==='Gestor')renderDash();
+      syncEngine(); // processar fila pendente
+    });
+  }
+
+  if(p==='Gestor')checkRelatorioAutomatico();
   initRealtime();
+  initServiceWorker();
 }
 
 /* ═══ NAV ═══ */
@@ -754,66 +1064,42 @@ function refreshRespSel(){
     </label>`).join('');
 }
 
-/* ═══ GRÁFICO MENSAL ═══ */
-function renderChartMensal(){
-  const ctx=document.getElementById('chart-mensal');if(!ctx)return;
-  const now=new Date();
-  const labels=[],totais=[],criticos=[];
-  for(let i=5;i>=0;i--){
-    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
-    const y=d.getFullYear(),m=d.getMonth();
-    labels.push(MESES[m]+'/'+String(y).slice(2));
-    const doMes=tickets.filter(t=>{const td=new Date(t.criadoEm);return td.getFullYear()===y&&td.getMonth()===m;});
-    totais.push(doMes.length);
-    criticos.push(doMes.filter(t=>dias(t.criadoEm)>=7&&t.status!=='finalizado'&&t.status!=='autorizado').length);
-  }
-  if(chartMensal)chartMensal.destroy();
-  chartMensal=new Chart(ctx,{
-    type:'bar',
-    data:{
-      labels,
-      datasets:[
-        {label:'Total',data:totais,backgroundColor:'rgba(69,177,117,0.7)',borderColor:'#45b175',borderWidth:1,borderRadius:4},
-        {label:'Críticos 7+d',data:criticos,backgroundColor:'rgba(232,79,79,0.7)',borderColor:'#e84f4f',borderWidth:1,borderRadius:4},
-      ]
-    },
-    options:{
-      responsive:true,
-      plugins:{legend:{labels:{color:'#a5ccb7',font:{family:'Manrope',size:11}}},tooltip:{backgroundColor:'#0d2419',titleColor:'#eaf7f1',bodyColor:'#a5ccb7'}},
-      scales:{
-        x:{ticks:{color:'#5c9178',font:{size:10}},grid:{color:'rgba(69,177,117,0.08)'}},
-        y:{ticks:{color:'#5c9178',font:{size:10},stepSize:1},grid:{color:'rgba(69,177,117,0.08)'},beginAtZero:true}
-      }
-    }
-  });
-}
-
-/* ═══ ALERTAS ═══ */
+/* ═══ DASHBOARD + ALERTAS + GRÁFICO ═══ */
 function renderAlertas(){
-  const sec=document.getElementById('sec-alertas');
-  const list=document.getElementById('alertas-list');
+  const sec=document.getElementById('sec-alertas');const list=document.getElementById('alertas-list');
   if(!sec||!list)return;
   const alertas=[];
   tickets.filter(t=>!['finalizado','autorizado','negado'].includes(t.status)).forEach(t=>{
-    const urg=t.urgencia||'normal';
-    const limDias=urg==='urgente'?2:5;
+    const urg=t.urgencia||'normal';const limDias=urg==='urgente'?2:5;
     const diasSemAnd=Math.floor((Date.now()-lastHistTs(t))/86400000);
     if(diasSemAnd>=limDias)alertas.push({t,msg:`Sem andamento há ${diasSemAnd}d`,cls:urg==='urgente'?'':'warn'});
   });
   tickets.filter(t=>t.status==='negado'&&t.urgencia==='urgente').forEach(t=>alertas.push({t,msg:'Urgente foi NEGADO',cls:''}));
   sec.style.display=alertas.length?'block':'none';
-  list.innerHTML=alertas.map(a=>`<div class="alert-card ${a.cls}" onclick="openDet(${a.t.id})">
+  list.innerHTML=alertas.map(a=>`<div class="alert-card ${a.cls}" onclick="openDet('${a.t.localId}')">
     <div class="alert-title">${a.t.proto} — ${a.t.titulo}</div>
     <div class="alert-sub">${a.msg} · ${urgBadge(a.t.urgencia||'normal')}</div>
   </div>`).join('');
 }
-
-/* ═══ DASHBOARD ═══ */
+function renderChartMensal(){
+  const ctx=document.getElementById('chart-mensal');if(!ctx)return;
+  const now=new Date();const labels=[],totais=[],criticos=[];
+  for(let i=5;i>=0;i--){
+    const d=new Date(now.getFullYear(),now.getMonth()-i,1);const y=d.getFullYear(),m=d.getMonth();
+    labels.push(MESES[m]+'/'+String(y).slice(2));
+    const doMes=tickets.filter(t=>{const td=new Date(t.criadoEm);return td.getFullYear()===y&&td.getMonth()===m;});
+    totais.push(doMes.length);
+    criticos.push(doMes.filter(t=>dias(t.criadoEm)>=7&&!['finalizado','autorizado'].includes(t.status)).length);
+  }
+  if(chartMensal)chartMensal.destroy();
+  chartMensal=new Chart(ctx,{type:'bar',data:{labels,datasets:[
+    {label:'Total',data:totais,backgroundColor:'rgba(69,177,117,0.7)',borderColor:'#45b175',borderWidth:1,borderRadius:4},
+    {label:'Críticos 7+d',data:criticos,backgroundColor:'rgba(232,79,79,0.7)',borderColor:'#e84f4f',borderWidth:1,borderRadius:4},
+  ]},options:{responsive:true,plugins:{legend:{labels:{color:'#a5ccb7',font:{family:'Manrope',size:11}}},tooltip:{backgroundColor:'#0d2419',titleColor:'#eaf7f1',bodyColor:'#a5ccb7'}},scales:{x:{ticks:{color:'#5c9178',font:{size:10}},grid:{color:'rgba(69,177,117,0.08)'}},y:{ticks:{color:'#5c9178',font:{size:10},stepSize:1},grid:{color:'rgba(69,177,117,0.08)'},beginAtZero:true}}}});
+}
 function renderDash(){
-  const all=tickets;
-  const open=all.filter(t=>!['finalizado','autorizado','negado'].includes(t.status));
-  const crit=open.filter(t=>dias(t.criadoEm)>=7);
-  const fin=all.filter(t=>t.status==='finalizado');
+  const all=tickets;const open=all.filter(t=>!['finalizado','autorizado','negado'].includes(t.status));
+  const crit=open.filter(t=>dias(t.criadoEm)>=7);const fin=all.filter(t=>t.status==='finalizado');
   const tmedio=fin.length?Math.round(fin.reduce((s,t)=>s+dias(t.criadoEm),0)/fin.length):0;
   document.getElementById('kgrid').innerHTML=`
     <div class="kcard"><div class="kstripe" style="background:#45b175"></div><div class="kico">📋</div><div class="kval">${all.length}</div><div class="klbl">Total</div></div>
@@ -827,11 +1113,10 @@ function renderDash(){
   const atr=open.filter(t=>dias(t.criadoEm)>=3).sort((a,b)=>a.criadoEm-b.criadoEm);
   document.getElementById('atrlbl').textContent=`Chamados em atenção (${atr.length})`;
   document.getElementById('tkatr').innerHTML=atr.length?atr.map(buildCard).join(''):`<div class="empty"><div class="eico">🎉</div><p>Tudo em dia!</p></div>`;
-  renderAlertas();
-  renderChartMensal();
+  renderAlertas();renderChartMensal();
 }
 
-/* ═══ TICKETS ═══ */
+/* ═══ TICKETS RENDER ═══ */
 function getVis(){
   let list=tickets;
   if(cu.perfil==='Solicitante')list=list.filter(t=>t.criadoPor===cu.email);
@@ -844,13 +1129,14 @@ function buildCard(t){
   const fin=['finalizado','autorizado','negado'].includes(t.status);
   const urg=t.urgencia||'normal';
   const urgBorder=urg==='urgente'?'border-color:#e84f4f55;':urg==='importante'?'border-color:#e8934a44;':'';
-  return`<div class="tk" onclick="openDet(${t.id})" style="${fin?'opacity:.7':''}${urgBorder}">
+  const pendingBadge=!t.synced?'<span style="font-size:9px;background:var(--ora-a);color:var(--ora);border:1px solid var(--ora);border-radius:8px;padding:1px 5px;margin-left:4px">⏳ pendente</span>':'';
+  return`<div class="tk" onclick="openDet('${t.localId}')" style="${fin?'opacity:.7':''}${urgBorder}">
     <div class="tkstrip" style="background:${urg==='urgente'?'#e84f4f':urg==='importante'?'#e8934a':ag.c}"></div>
     <div class="tkbody">
-      <div class="tkhead"><span class="tkproto">${t.proto}</span><span class="tkdpill" style="background:${ag.c}22;color:${ag.c};border:1px solid ${ag.c}44">${d}d</span>${urgBadge(urg)}</div>
+      <div class="tkhead"><span class="tkproto">${t.proto}</span>${pendingBadge}<span class="tkdpill" style="background:${ag.c}22;color:${ag.c};border:1px solid ${ag.c}44">${d}d</span>${urgBadge(urg)}</div>
       <div class="tktitle">${t.titulo}</div>
       <div class="tkmeta"><span class="badge ${st.cls}">${st.lbl}</span><span class="sbadge">${t.setor}</span><span class="badge" style="background:var(--g800);color:var(--t3);border:1px solid var(--b2)">${TIPOS[t.tipo]||t.tipo}</span></div>
-      <div class="tkdate">📅 Aberto em ${fmtD(t.criadoEm)}</div>
+      <div class="tkdate">📅 ${fmtD(t.criadoEm)}</div>
     </div>
     <div class="tkside"><div class="tkdnum" style="color:${fin?'var(--t4)':ag.c}">${d}</div><div class="tkdlbl">${d===1?'dia':'dias'}</div></div>
   </div>`;
@@ -865,49 +1151,27 @@ function renderTks(){
 }
 
 /* ═══ FOTO ═══ */
-function mostrarFotoInput(){
-  document.getElementById('foto-pergunta').style.display='none';
-  document.getElementById('foto-input-wrap').style.display='block';
-}
+function mostrarFotoInput(){document.getElementById('foto-pergunta').style.display='none';document.getElementById('foto-input-wrap').style.display='block';}
 function previewFoto(input){
   const file=input.files[0];if(!file)return;
   const reader=new FileReader();
   reader.onload=e=>{
-    const prev=document.getElementById('foto-preview');
-    prev.src=e.target.result;prev.style.display='block';
-    // Redimensionar se > 800KB
+    const prev=document.getElementById('foto-preview');prev.src=e.target.result;prev.style.display='block';
     if(e.target.result.length>1100000){
-      const img=new Image();
-      img.onload=()=>{
-        const canvas=document.createElement('canvas');
-        const max=1024;let w=img.width,h=img.height;
-        if(w>max){h=Math.round(h*max/w);w=max;}
-        canvas.width=w;canvas.height=h;
-        canvas.getContext('2d').drawImage(img,0,0,w,h);
-        prev.src=canvas.toDataURL('image/jpeg',0.75);
-      };
-      img.src=e.target.result;
+      const img=new Image();img.onload=()=>{const canvas=document.createElement('canvas');const max=1024;let w=img.width,h=img.height;if(w>max){h=Math.round(h*max/w);w=max;}canvas.width=w;canvas.height=h;canvas.getContext('2d').drawImage(img,0,0,w,h);prev.src=canvas.toDataURL('image/jpeg',0.75);};img.src=e.target.result;
     }
-  };
-  reader.readAsDataURL(file);
+  };reader.readAsDataURL(file);
 }
-function getFotoBase64(){
-  const prev=document.getElementById('foto-preview');
-  if(!prev||prev.style.display==='none')return null;
-  return prev.src.startsWith('data:image')?prev.src:null;
-}
+function getFotoBase64(){const prev=document.getElementById('foto-preview');if(!prev||prev.style.display==='none')return null;return prev.src.startsWith('data:image')?prev.src:null;}
 
 /* ═══ SEL SETOR MEL/DRONE ═══ */
 let _setorMDselecionado=null;
 function selecionarSetorMD(setor){
   _setorMDselecionado=setor;
-  ['mel','drone'].forEach(s=>{
-    const btn=document.getElementById('btn-sel-'+s);
-    if(btn){btn.style.background=s===setor.toLowerCase()?'var(--g600)':'var(--g900)';btn.style.borderColor=s===setor.toLowerCase()?'var(--g300)':'var(--b2)';btn.style.color=s===setor.toLowerCase()?'var(--t1)':'var(--t2)';}
-  });
+  ['mel','drone'].forEach(s=>{const btn=document.getElementById('btn-sel-'+s);if(btn){btn.style.background=s===setor.toLowerCase()?'var(--g600)':'var(--g900)';btn.style.borderColor=s===setor.toLowerCase()?'var(--g300)':'var(--b2)';btn.style.color=s===setor.toLowerCase()?'var(--t1)':'var(--t2)';}});
 }
 
-/* ═══ NEW TICKET ═══ */
+/* ═══ NEW TICKET — OFFLINE FIRST ═══ */
 async function submitTk(){
   const tit=document.getElementById('ntit').value.trim();
   const urg=document.getElementById('nurg').value;
@@ -918,6 +1182,7 @@ async function submitTk(){
   if(!urg){showToast('Selecione a urgência!');return;}
   if(!set){showToast(isMD?'Escolha: Mel ou Drone!':'Selecione o setor!');return;}
   if(!tip){showToast('Selecione o tipo!');return;}
+
   const checked=[...document.querySelectorAll('#nresp-list input[type=checkbox]:checked')];
   const respIds=checked.map(c=>c.value);
   const resps=respIds.map(id=>users.find(u=>String(u.id)===String(id))).filter(Boolean);
@@ -925,31 +1190,42 @@ async function submitTk(){
   const respNomes=resps.length?resps.map(r=>r.nome).join(', '):null;
   const fotoB64=getFotoBase64();
   const nowISO=new Date().toISOString();
-  let tkId=null;
-  try{
-    seq++;
-    const{data}=await sb.from('chamados').insert([{
-      proto:`#FRU-${seq}`,titulo:tit,setor:set,tipo:tip,descricao:descVal,urgencia:urg,foto:fotoB64,
-      status:'aberto',criado_por_email:cu.email,criado_nome:cu.nome,
-      criado_em:nowISO,responsavel:respNomes,responsavel_ids:respIds
-    }]).select().single();
-    if(data){
-      tkId=data.id;
-      await sb.from('historico').insert([{chamado_id:tkId,status:'aberto',obs:'Chamado aberto',feito_por:cu.nome,feito_em:nowISO}]);
-      setSbStatus(true);
-    }
-  }catch(e){setSbStatus(false);seq++;tkId=seq;}
-  const t={id:tkId||seq,proto:`#FRU-${tkId||seq}`,titulo:tit,setor:set,tipo:tip,urgencia:urg,foto:fotoB64,
-    desc:descVal,responsavel:respNomes,responsavelIds:respIds,
-    criadoPor:cu.email,criadoNome:cu.nome,criadoEm:Date.now(),
-    status:'aberto',history:[{status:'aberto',ts:Date.now(),by:cu.nome,obs:'Chamado aberto'}]};
-  tickets.unshift(t);saveLS(LS_T,tickets);
+  seq++;
+  const proto=`#FRU-${seq}`;
+  const localId=genLocalId();
+
+  // 1. SALVAR LOCAL PRIMEIRO (sempre, independente de conexão)
+  const t={
+    localId, remoteId:null, id:localId, // id provisório
+    synced:false,
+    proto, titulo:tit, setor:set, tipo:tip, urgencia:urg, foto:fotoB64,
+    desc:descVal, responsavel:respNomes, responsavelIds:respIds,
+    criadoPor:cu.email, criadoNome:cu.nome, criadoEm:Date.now(),
+    status:'aberto',
+    history:[{status:'aberto',ts:Date.now(),by:cu.nome,obs:'Chamado aberto'}]
+  };
+  await idbSaveTicket(t);
+  tickets.unshift(t);
+
+  // 2. ADICIONAR NA FILA DE SINCRONIZAÇÃO
+  const sbPayload={
+    proto,titulo:tit,setor:set,tipo:tip,descricao:descVal,urgencia:urg,foto:fotoB64,
+    status:'aberto',criado_por_email:cu.email,criado_nome:cu.nome,
+    criado_em:nowISO,responsavel:respNomes,responsavel_ids:respIds
+  };
+  await queueAdd({type:'CREATE',localId,payload:sbPayload,offlineNote:!navigator.onLine});
+
+  // 3. TENTAR ENVIAR AGORA SE ONLINE
+  if(navigator.onLine){
+    syncEngine(); // roda em background, não bloqueia
+  }
+
+  // Reset form
   closeM('mticket');
   ['ntit','ndesc'].forEach(id=>document.getElementById(id).value='');
   const _nset=document.getElementById('nset');if(_nset)_nset.value='';
   document.getElementById('ntip').value='';document.getElementById('nurg').value='';
   _setorMDselecionado=null;
-  // reset foto
   document.getElementById('foto-pergunta').style.display='flex';
   document.getElementById('foto-skip').style.display='none';
   document.getElementById('foto-input-wrap').style.display='none';
@@ -957,16 +1233,19 @@ async function submitTk(){
   document.getElementById('foto-preview').src='';
   if(document.getElementById('nfoto'))document.getElementById('nfoto').value='';
   document.querySelectorAll('#nresp-list input[type=checkbox]').forEach(c=>c.checked=false);
-  showToast(`Chamado ${t.proto} aberto!`);
+
+  showToast(navigator.onLine?`Chamado ${proto} aberto!`:`Chamado ${proto} salvo! Será enviado ao conectar.`);
   renderTks();if(cu.perfil==='Gestor')renderDash();navTo('chamados');
+  updateQueueIndicator();
 }
 
 /* ═══ TICKET DETAIL ═══ */
-function openDet(id){
-  const t=tickets.find(x=>x.id===id);if(!t)return;
-  curTkId=id;
+function openDet(localId){
+  const t=tickets.find(x=>x.localId===localId||String(x.id)===String(localId));
+  if(!t)return;
+  curTkId=t.localId;
   const d=dias(t.criadoEm);const ag=agOf(d);
-  document.getElementById('dproto').textContent=t.proto;
+  document.getElementById('dproto').textContent=t.proto+(t.synced?'':'  ⏳');
   document.getElementById('dbadge').innerHTML=sbadge(t.status);
   const ban=document.getElementById('aging-ban');
   const showBan=(cu.perfil==='Gestor')||(d>=3&&!['finalizado','autorizado','negado'].includes(t.status));
@@ -986,82 +1265,61 @@ function openDet(id){
   document.getElementById('d-sol').textContent=t.criadoNome||'—';
   document.getElementById('d-abert').textContent=fmtDT(t.criadoEm);
   document.getElementById('d-desc').textContent=t.desc||'Sem descrição.';
-  // Foto
-  const fotoSec=document.getElementById('d-foto-sec');
-  const fotoImg=document.getElementById('d-foto-img');
+  const fotoSec=document.getElementById('d-foto-sec');const fotoImg=document.getElementById('d-foto-img');
   if(t.foto){fotoSec.style.display='';fotoImg.src=t.foto;}else fotoSec.style.display='none';
-  // Tempo por etapa
   const tsec=document.getElementById('d-tempo-sec');
-  const realH=t.history.filter(h=>h.status!=='chat');
+  const realH=(t.history||[]).filter(h=>h.status!=='chat');
   if(realH.length>1){
     tsec.style.display='';
-    document.getElementById('d-tempo').innerHTML=realH.map((h,i)=>{
-      const next=realH[i+1];const ms=(next?next.ts:Date.now())-h.ts;
-      const si=stOf(h.status);
-      return`<div class="sttime"><span class="sttl"><span class="badge ${si.cls}" style="font-size:10px">${si.lbl}</span></span><span class="sttv">${fmtDur(ms)}</span></div>`;
-    }).join('');
+    document.getElementById('d-tempo').innerHTML=realH.map((h,i)=>{const next=realH[i+1];const ms=(next?next.ts:Date.now())-h.ts;const si=stOf(h.status);return`<div class="sttime"><span class="sttl"><span class="badge ${si.cls}" style="font-size:10px">${si.lbl}</span></span><span class="sttv">${fmtDur(ms)}</span></div>`;}).join('');
   }else tsec.style.display='none';
-  // Histórico (sem chat)
-  document.getElementById('d-hist').innerHTML=realH.slice().reverse().map(h=>{
-    const si=stOf(h.status);
-    return`<div class="hitem"><div class="hdot" style="background:${si.color}"></div><div style="flex:1">
-      <div class="hact"><span class="badge ${si.cls}" style="font-size:10.5px">${si.lbl}</span></div>
-      ${h.obs?`<div class="hdet">${h.obs}</div>`:''}
-      <div class="htm">${h.by} · ${fmtDT(h.ts)}</div></div></div>`;
-  }).join('');
-  // Chat — só quando negado
+  document.getElementById('d-hist').innerHTML=realH.slice().reverse().map(h=>{const si=stOf(h.status);return`<div class="hitem"><div class="hdot" style="background:${si.color}"></div><div style="flex:1"><div class="hact"><span class="badge ${si.cls}" style="font-size:10.5px">${si.lbl}</span></div>${h.obs?`<div class="hdet">${h.obs}</div>`:''}  <div class="htm">${h.by} · ${fmtDT(h.ts)}</div></div></div>`;}).join('');
   const chatSec=document.getElementById('d-chat-sec');
   const btnAlt=document.getElementById('btn-alterar-decisao');
   const isGestAdmin=(cu.perfil==='Administrativo'||cu.perfil==='Gestor');
   const podeChat=t.status==='negado'&&(cu.email===t.criadoPor||isGestAdmin);
   chatSec.style.display=podeChat?'':'none';
-  if(podeChat){
-    if(btnAlt)btnAlt.style.display=isGestAdmin?'inline-flex':'none';
-    renderChat(t);
-  }
+  if(podeChat){if(btnAlt)btnAlt.style.display=isGestAdmin?'inline-flex':'none';renderChat(t);}
   renderAbar(t);
   const ov=document.getElementById('det-ov');ov.classList.add('open');ov.scrollTop=0;
-  // Marcar notificações como lidas
   if(notifCount>0){notifCount=0;updateNotifBadge();}
 }
 function closeDet(){document.getElementById('det-ov').classList.remove('open');curTkId=null;}
 function renderChat(t){
-  const msgs=t.history.filter(h=>h.status==='chat');
+  const msgs=(t.history||[]).filter(h=>h.status==='chat');
   const box=document.getElementById('d-chat-msgs');
   if(!msgs.length){box.innerHTML=`<p style="font-size:12px;color:var(--t4);text-align:center;padding:12px 0">Nenhuma mensagem ainda.</p>`;return;}
-  box.innerHTML=msgs.map(h=>{
-    const mine=h.by===cu.nome;
-    return`<div style="display:flex;flex-direction:column;align-items:${mine?'flex-end':'flex-start'}">
-      <div class="chat-msg ${mine?'mine':'other'}">
-        <div class="chat-who">${mine?'Você':h.by}</div>${h.obs||''}
-        <div class="chat-time">${fmtDT(h.ts)}</div>
-      </div></div>`;
-  }).join('');
+  box.innerHTML=msgs.map(h=>{const mine=h.by===cu.nome;return`<div style="display:flex;flex-direction:column;align-items:${mine?'flex-end':'flex-start'}"><div class="chat-msg ${mine?'mine':'other'}"><div class="chat-who">${mine?'Você':h.by}</div>${h.obs||''}<div class="chat-time">${fmtDT(h.ts)}</div></div></div>`;}).join('');
   setTimeout(()=>{box.scrollTop=box.scrollHeight;},50);
 }
 function renderAbar(t){
   const bar=document.getElementById('abar');const p=cu.perfil;
   if(['finalizado','autorizado'].includes(t.status)){bar.innerHTML=`<p style="color:var(--t4);font-size:13px;text-align:center;width:100%;font-weight:600">Chamado encerrado</p>`;return;}
   if(t.status==='negado'){bar.innerHTML=`<button class="btn bg" style="width:100%" onclick="closeDet()">← Voltar</button>`;return;}
-  if(p==='Administrativo'||p==='Gestor'){
-    bar.innerHTML=`<button class="btn bg" style="flex:1" onclick="closeDet()">← Voltar</button><button class="btn bp" style="flex:2" onclick="openStModal()">Atualizar Status →</button>`;
-  }else{bar.innerHTML=`<button class="btn bg" style="width:100%" onclick="closeDet()">← Voltar</button>`;}
+  if(p==='Administrativo'||p==='Gestor'){bar.innerHTML=`<button class="btn bg" style="flex:1" onclick="closeDet()">← Voltar</button><button class="btn bp" style="flex:2" onclick="openStModal()">Atualizar Status →</button>`;}
+  else{bar.innerHTML=`<button class="btn bg" style="width:100%" onclick="closeDet()">← Voltar</button>`;}
 }
 
 /* ═══ CHAT ═══ */
 async function sendChatMsg(){
-  const t=tickets.find(x=>x.id===curTkId);if(!t)return;
+  const t=tickets.find(x=>x.localId===curTkId);if(!t)return;
   const txt=document.getElementById('d-chat-txt').value.trim();
   if(!txt){showToast('Digite uma mensagem!');return;}
   const nowISO=new Date().toISOString();
   const entry={status:'chat',ts:Date.now(),by:cu.nome,obs:txt};
-  try{await sb.from('historico').insert([{chamado_id:t.id,status:'chat',obs:txt,feito_por:cu.nome,feito_em:nowISO}]);setSbStatus(true);}catch(e){setSbStatus(false);}
-  t.history.push(entry);saveLS(LS_T,tickets);
+  t.history.push(entry);
+  await idbSaveTicket(t);
+  if(t.remoteId&&navigator.onLine){
+    try{await sb.from('historico').insert([{chamado_id:t.remoteId,status:'chat',obs:txt,feito_por:cu.nome,feito_em:nowISO}]);setSbStatus(true);}
+    catch(e){await queueAdd({type:'CHAT',localId:t.localId,remoteId:t.remoteId,payload:{obs:txt,feito_por:cu.nome,feito_em:nowISO}});}
+  }else if(t.remoteId){
+    await queueAdd({type:'CHAT',localId:t.localId,remoteId:t.remoteId,payload:{obs:txt,feito_por:cu.nome,feito_em:nowISO}});
+  }
   document.getElementById('d-chat-txt').value='';
   renderChat(t);showToast('Mensagem enviada!');
 }
 function openAlterarDecisao(){
-  const t=tickets.find(x=>x.id===curTkId);if(!t)return;
+  const t=tickets.find(x=>x.localId===curTkId);if(!t)return;
   const opts=isAuth(t.tipo)?ST_AUTH:ST_NORMAL;
   document.getElementById('nst').innerHTML=opts.map(o=>`<option value="${o.v}">${o.l}</option>`).join('');
   document.getElementById('nobs').value='';
@@ -1070,9 +1328,9 @@ function openAlterarDecisao(){
   openM('mstatus');
 }
 
-/* ═══ STATUS UPDATE ═══ */
+/* ═══ STATUS UPDATE — OFFLINE FIRST ═══ */
 function openStModal(){
-  const t=tickets.find(x=>x.id===curTkId);if(!t)return;
+  const t=tickets.find(x=>x.localId===curTkId);if(!t)return;
   const opts=isAuth(t.tipo)?ST_AUTH:ST_NORMAL;
   document.getElementById('nst').innerHTML=opts.map(o=>`<option value="${o.v}" ${t.status===o.v?'selected':''}>${o.l}</option>`).join('');
   document.getElementById('nobs').value='';
@@ -1081,31 +1339,45 @@ function openStModal(){
   openM('mstatus');
 }
 async function applyStatus(){
-  const t=tickets.find(x=>x.id===curTkId);if(!t)return;
+  const t=tickets.find(x=>x.localId===curTkId);if(!t)return;
   const ns=document.getElementById('nst').value;
   const obs=document.getElementById('nobs').value.trim();
   if(isAuth(t.tipo)&&!obs){showToast('Observação obrigatória!');return;}
   const nowISO=new Date().toISOString();
-  try{
-    await sb.from('chamados').update({status:ns}).eq('id',t.id);
-    await sb.from('historico').insert([{chamado_id:t.id,status:ns,obs:obs||null,feito_por:cu.nome,feito_em:nowISO}]);
-    setSbStatus(true);
-  }catch(e){setSbStatus(false);}
-  t.history.push({status:ns,ts:Date.now(),by:cu.nome,obs:obs||null});
-  t.status=ns;saveLS(LS_T,tickets);
+  const entry={status:ns,ts:Date.now(),by:cu.nome,obs:obs||null};
+
+  // 1. Salvar local primeiro
+  t.history.push(entry);t.status=ns;
+  await idbSaveTicket(t);
+
+  // 2. Fila de sync
+  if(t.remoteId){
+    if(navigator.onLine){
+      try{
+        await sb.from('chamados').update({status:ns}).eq('id',t.remoteId);
+        await sb.from('historico').insert([{chamado_id:t.remoteId,status:ns,obs:obs||null,feito_por:cu.nome,feito_em:nowISO}]);
+        setSbStatus(true);
+      }catch(e){
+        await queueAdd({type:'UPDATE_STATUS',localId:t.localId,remoteId:t.remoteId,payload:{status:ns,obs:obs||null,feito_por:cu.nome,feito_em:nowISO}});
+        setSbStatus(false);
+      }
+    }else{
+      await queueAdd({type:'UPDATE_STATUS',localId:t.localId,remoteId:t.remoteId,payload:{status:ns,obs:obs||null,feito_por:cu.nome,feito_em:nowISO}});
+    }
+  }
+
   closeM('mstatus');
-  const obsLbl=document.getElementById('nobs-label');
-  if(obsLbl){obsLbl.textContent='Observação (opcional)';obsLbl.style.color='';}
+  const obsLbl=document.getElementById('nobs-label');if(obsLbl){obsLbl.textContent='Observação (opcional)';obsLbl.style.color='';}
   showToast(`Status: ${stOf(ns).lbl}`);
-  openDet(t.id);renderTks();if(cu.perfil==='Gestor')renderDash();
+  openDet(t.localId);renderTks();if(cu.perfil==='Gestor')renderDash();
+  updateQueueIndicator();
 }
 
-/* ═══ USERS ═══ */
+/* ═══ USERS MODAL ═══ */
 function openM(id){
   if(id==='mticket'){
     const isMD=cu&&cu.setor==='Mel/Drone';
-    const nsetEl=document.getElementById('nset');
-    const mdDiv=document.getElementById('nset-meldrone');
+    const nsetEl=document.getElementById('nset');const mdDiv=document.getElementById('nset-meldrone');
     _setorMDselecionado=null;
     if(isMD){nsetEl.style.display='none';if(mdDiv)mdDiv.style.display='block';['mel','drone'].forEach(s=>{const btn=document.getElementById('btn-sel-'+s);if(btn){btn.style.background='var(--g900)';btn.style.borderColor='var(--b2)';btn.style.color='var(--t2)';}});}
     else{nsetEl.style.display='';if(mdDiv)mdDiv.style.display='none';}
@@ -1135,11 +1407,9 @@ document.querySelectorAll('.mbg').forEach(m=>m.addEventListener('click',e=>{if(e
 /* ═══ RELATÓRIO AUTOMÁTICO ═══ */
 function checkRelatorioAutomatico(){
   if(!cu||cu.perfil!=='Gestor')return;
-  const hoje=new Date();
-  if(hoje.getDate()!==1)return;
+  const hoje=new Date();if(hoje.getDate()!==1)return;
   const chave=`fru_relatorio_${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}`;
   if(localStorage.getItem(chave))return;
-  // Gerar PDF do mês anterior
   const mesAnterior=new Date(hoje.getFullYear(),hoje.getMonth()-1,1);
   const iniTs=mesAnterior.getTime();
   const fimTs=new Date(hoje.getFullYear(),hoje.getMonth(),1).getTime()-1;
@@ -1156,188 +1426,109 @@ function checkRelatorioAutomatico(){
 function cleanTxt(s){return(s||'').replace(/[^\x00-\x7F\u00C0-\u024F]/g,'').trim();}
 function stLbl(id){const map={aberto:'Aberto',analise:'Em Analise',compra:'Sol. Compra',aguardando:'Aguardando',finalizado:'Finalizado',autorizado:'Autorizado',negado:'Negado'};return map[id]||id;}
 function urgLbl(u){return u==='urgente'?'Urgente':u==='importante'?'Importante':'Normal';}
-
 function exportPDF(){
-  // Aplicar filtros do modal
-  const dtIni=document.getElementById('pdf-dt-ini')?.value;
-  const dtFim=document.getElementById('pdf-dt-fim')?.value;
-  const filtSetor=document.getElementById('pdf-setor')?.value||'';
-  const filtStatus=document.getElementById('pdf-status')?.value||'';
-  const filtUrg=document.getElementById('pdf-urg')?.value||'';
+  const dtIni=document.getElementById('pdf-dt-ini')?.value;const dtFim=document.getElementById('pdf-dt-fim')?.value;
+  const filtSetor=document.getElementById('pdf-setor')?.value||'';const filtStatus=document.getElementById('pdf-status')?.value||'';const filtUrg=document.getElementById('pdf-urg')?.value||'';
   let lista=tickets;
   if(dtIni)lista=lista.filter(t=>t.criadoEm>=new Date(dtIni).getTime());
   if(dtFim)lista=lista.filter(t=>t.criadoEm<=new Date(dtFim+'T23:59:59').getTime());
-  if(filtSetor)lista=lista.filter(t=>t.setor===filtSetor);
-  if(filtStatus)lista=lista.filter(t=>t.status===filtStatus);
-  if(filtUrg)lista=lista.filter(t=>(t.urgencia||'normal')===filtUrg);
-  closeM('mpdf');
-  const today=new Date();
-  exportPDFComFiltro(lista,`relatorio-chamados-${today.toISOString().slice(0,10)}.pdf`);
+  if(filtSetor)lista=lista.filter(t=>t.setor===filtSetor);if(filtStatus)lista=lista.filter(t=>t.status===filtStatus);if(filtUrg)lista=lista.filter(t=>(t.urgencia||'normal')===filtUrg);
+  closeM('mpdf');exportPDFComFiltro(lista,`relatorio-chamados-${new Date().toISOString().slice(0,10)}.pdf`);
 }
-
 function exportPDFComFiltro(lista,nomeArquivo){
-  const{jsPDF}=window.jspdf;
-  const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
-  const pw=doc.internal.pageSize.getWidth();
+  const{jsPDF}=window.jspdf;const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});const pw=doc.internal.pageSize.getWidth();
   const todayStr=new Date().toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
   doc.setFillColor(13,36,25);doc.rect(0,0,pw,28,'F');
-  doc.setFont('helvetica','bold');doc.setFontSize(26);doc.setTextColor(69,177,117);doc.text('FRUTE',14,18);
-  doc.setTextColor(255,255,255);doc.text('SP',48,18);
+  doc.setFont('helvetica','bold');doc.setFontSize(26);doc.setTextColor(69,177,117);doc.text('FRUTE',14,18);doc.setTextColor(255,255,255);doc.text('SP',48,18);
   doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(163,204,183);doc.text('Sistema de Chamados Operacionais',14,23);
   doc.setFont('helvetica','bold');doc.setFontSize(13);doc.setTextColor(255,255,255);doc.text('Relatorio de Chamados',pw/2,13,{align:'center'});
   doc.setFont('helvetica','normal');doc.setFontSize(8.5);doc.setTextColor(163,204,183);doc.text(`Gerado em ${todayStr}`,pw/2,19,{align:'center'});
   const abertos=lista.filter(t=>!['finalizado','autorizado','negado'].includes(t.status)).length;
-  const criticos=lista.filter(t=>!['finalizado','autorizado','negado'].includes(t.status)&&dias(t.criadoEm)>=7).length;
-  const stats=[{lbl:'Total',val:String(lista.length)},{lbl:'Em Aberto',val:String(abertos)},{lbl:'Criticos 7+d',val:String(criticos)}];
+  const stats=[{lbl:'Total',val:String(lista.length)},{lbl:'Em Aberto',val:String(abertos)},{lbl:'Criticos 7+d',val:String(lista.filter(t=>!['finalizado','autorizado','negado'].includes(t.status)&&dias(t.criadoEm)>=7).length)}];
   let sx=pw-14;stats.slice().reverse().forEach(s=>{const tw=Math.max(doc.getTextWidth(s.val),doc.getTextWidth(s.lbl))+4;sx-=tw+8;doc.setFont('helvetica','bold');doc.setFontSize(13);doc.setTextColor(69,177,117);doc.text(s.val,sx,13);doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.setTextColor(163,204,183);doc.text(s.lbl,sx,19);});
   const cols=[{header:'Protocolo',dataKey:'proto'},{header:'Titulo',dataKey:'titulo'},{header:'Urgencia',dataKey:'urg'},{header:'Setor',dataKey:'setor'},{header:'Tipo',dataKey:'tipo'},{header:'Status',dataKey:'status'},{header:'Solicitante',dataKey:'sol'},{header:'Atualizado por',dataKey:'upby'},{header:'Abertura',dataKey:'abert'},{header:'Dias',dataKey:'dias'},{header:'Ultimo Status',dataKey:'ultimo'}];
-  const rows=lista.map(t=>{
-    const d=dias(t.criadoEm);
-    const rH=t.history.filter(h=>h.status!=='chat');
-    const lastH=rH.length?rH[rH.length-1]:null;
-    return{proto:t.proto,titulo:cleanTxt(t.titulo),urg:urgLbl(t.urgencia||'normal'),setor:cleanTxt(t.setor),tipo:cleanTxt(TIPOS[t.tipo]||t.tipo),status:stLbl(t.status),sol:cleanTxt(t.criadoNome)||'--',upby:cleanTxt(lastH?lastH.by:'--'),abert:fmtD(t.criadoEm),dias:String(d)+'d',ultimo:lastH?`${stLbl(lastH.status)}\n${fmtDT(lastH.ts)}`:'--',_d:d,_status:t.status,_urg:t.urgencia||'normal'};
-  });
+  const rows=lista.map(t=>{const d=dias(t.criadoEm);const rH=(t.history||[]).filter(h=>h.status!=='chat');const lastH=rH.length?rH[rH.length-1]:null;return{proto:t.proto+(t.synced?'':'*'),titulo:cleanTxt(t.titulo),urg:urgLbl(t.urgencia||'normal'),setor:cleanTxt(t.setor),tipo:cleanTxt(TIPOS[t.tipo]||t.tipo),status:stLbl(t.status),sol:cleanTxt(t.criadoNome)||'--',upby:cleanTxt(lastH?lastH.by:'--'),abert:fmtD(t.criadoEm),dias:String(d)+'d',ultimo:lastH?`${stLbl(lastH.status)}\n${fmtDT(lastH.ts)}`:'--',_d:d,_status:t.status,_urg:t.urgencia||'normal'};});
   const statusColors={aberto:[69,177,117],analise:[74,158,232],compra:[155,114,232],aguardando:[200,120,60],finalizado:[92,145,120],autorizado:[42,112,73],negado:[192,57,43]};
   const footer=()=>{const pageCount=doc.internal.getNumberOfPages();const cur=doc.internal.getCurrentPageInfo().pageNumber;const ph=doc.internal.pageSize.getHeight();doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.setTextColor(150,150,150);doc.text(`Pagina ${cur} de ${pageCount}`,pw-14,ph-6,{align:'right'});doc.text(`Gerado em ${todayStr} - FRUTESP`,14,ph-6);doc.setDrawColor(200,200,200);doc.setLineWidth(0.3);doc.line(14,ph-9,pw-14,ph-9);};
   doc.autoTable({startY:32,columns:cols,body:rows,theme:'grid',styles:{font:'helvetica',fontSize:7.5,cellPadding:{top:3,bottom:3,left:3,right:3},overflow:'linebreak',textColor:[30,50,40],lineColor:[220,220,220],lineWidth:0.2},headStyles:{fillColor:[13,36,25],textColor:[255,255,255],fontStyle:'bold',fontSize:8,halign:'center'},alternateRowStyles:{fillColor:[245,250,247]},
     columnStyles:{proto:{fontStyle:'bold',cellWidth:20,textColor:[42,112,73]},titulo:{cellWidth:34},urg:{cellWidth:16,halign:'center'},setor:{cellWidth:18,halign:'center'},tipo:{cellWidth:24},status:{cellWidth:20,halign:'center'},sol:{cellWidth:20},upby:{cellWidth:20},abert:{cellWidth:18,halign:'center',fontSize:7},dias:{cellWidth:10,halign:'center',fontStyle:'bold'},ultimo:{cellWidth:30,fontSize:7}},
     willDrawCell(data){if(data.section==='body'){if(data.column.dataKey==='dias'){const d=rows[data.row.index]._d;doc.setTextColor(...(d>=7?[192,57,43]:d>=3?[184,134,11]:[42,112,73]));}if(data.column.dataKey==='status'){const sid=rows[data.row.index]._status;doc.setTextColor(...(statusColors[sid]||[60,80,70]));}if(data.column.dataKey==='urg'){const u=rows[data.row.index]._urg;doc.setTextColor(...(u==='urgente'?[192,57,43]:u==='importante'?[200,120,60]:[42,112,73]));}}},
     didDrawPage:footer});
-  // Mini histórico
-  const comHist=lista.filter(t=>t.history.filter(h=>h.status!=='chat').length>1);
+  const comHist=lista.filter(t=>(t.history||[]).filter(h=>h.status!=='chat').length>1);
   if(comHist.length){
-    doc.addPage();
-    doc.setFillColor(13,36,25);doc.rect(0,0,pw,18,'F');
-    doc.setFont('helvetica','bold');doc.setFontSize(12);doc.setTextColor(255,255,255);doc.text('Historico Detalhado',pw/2,12,{align:'center'});
+    doc.addPage();doc.setFillColor(13,36,25);doc.rect(0,0,pw,18,'F');doc.setFont('helvetica','bold');doc.setFontSize(12);doc.setTextColor(255,255,255);doc.text('Historico Detalhado',pw/2,12,{align:'center'});
     let curY=24;
-    comHist.forEach(t=>{
-      if(curY>180){doc.addPage();curY=14;}
-      doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(42,112,73);doc.text(`${t.proto}  ${cleanTxt(t.titulo)}`,14,curY);curY+=5;
-      const rH=t.history.filter(h=>h.status!=='chat');
+    comHist.forEach(t=>{if(curY>180){doc.addPage();curY=14;}doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(42,112,73);doc.text(`${t.proto}  ${cleanTxt(t.titulo)}`,14,curY);curY+=5;
+      const rH=(t.history||[]).filter(h=>h.status!=='chat');
       doc.autoTable({startY:curY,head:[['Data','Status','Feito por','Observacao']],body:rH.map(h=>[fmtDT(h.ts),stLbl(h.status),cleanTxt(h.by)||'--',cleanTxt(h.obs)||'--']),theme:'grid',styles:{font:'helvetica',fontSize:7,cellPadding:{top:2,bottom:2,left:3,right:3},overflow:'linebreak',textColor:[30,50,40]},headStyles:{fillColor:[22,54,38],textColor:[255,255,255],fontStyle:'bold',fontSize:7.5},alternateRowStyles:{fillColor:[245,250,247]},columnStyles:{0:{cellWidth:28},1:{cellWidth:22},2:{cellWidth:24},3:{cellWidth:'auto'}},didDrawPage:footer,margin:{left:14,right:14}});
-      curY=doc.lastAutoTable.finalY+8;
-    });
+      curY=doc.lastAutoTable.finalY+8;});
   }
-  doc.save(nomeArquivo);
-  showToast('Relatorio PDF exportado!');
+  doc.save(nomeArquivo);showToast('Relatorio PDF exportado!');
 }
 
 /* ═══ NOTIFICAÇÕES REALTIME ═══ */
-function updateNotifBadge(){
-  const badge=document.getElementById('notif-badge');
-  if(!badge)return;
-  if(notifCount>0){badge.textContent=notifCount;badge.style.display='flex';}
-  else badge.style.display='none';
-}
+function updateNotifBadge(){const badge=document.getElementById('notif-badge');if(!badge)return;if(notifCount>0){badge.textContent=notifCount;badge.style.display='flex';}else badge.style.display='none';}
 let notifTimer=null;
-function showNotifBanner(msg,tkId,isUrg){
-  notifCurId=tkId;
-  const el=document.getElementById('notif-banner');
-  if(!el)return;
-  el.textContent='🔔 '+msg;
-  el.className='notif-banner show'+(isUrg?' urg':'');
-  clearTimeout(notifTimer);
-  notifTimer=setTimeout(()=>{el.classList.remove('show');},5000);
+function showNotifBanner(msg,localId,isUrg){
+  notifCurId=localId;const el=document.getElementById('notif-banner');if(!el)return;
+  el.textContent='🔔 '+msg;el.className='notif-banner show'+(isUrg?' urg':'');
+  clearTimeout(notifTimer);notifTimer=setTimeout(()=>{el.classList.remove('show');},5000);
   notifCount++;updateNotifBadge();
 }
-function onClickNotif(){
-  document.getElementById('notif-banner').classList.remove('show');
-  if(notifCurId)openDet(notifCurId);
-}
+function onClickNotif(){document.getElementById('notif-banner').classList.remove('show');if(notifCurId)openDet(notifCurId);}
 function initRealtime(){
   try{
     sb.channel('chamados-changes')
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'chamados'},payload=>{
-        const novo=payload.new;
-        if(!novo)return;
-        const t=mapChamado(novo,[]);
-        // Evitar duplicata
-        if(tickets.find(x=>x.id===t.id))return;
-        tickets.unshift(t);saveLS(LS_T,tickets);
+        const novo=payload.new;if(!novo)return;
+        // Evitar duplicata — pode já estar local
+        if(tickets.find(x=>x.remoteId===novo.id||x.proto===novo.proto))return;
+        const t=mapChamado(novo,[]);tickets.unshift(t);idbSaveTicket(t);
         const isResp=novo.responsavel&&novo.responsavel.includes(cu.nome);
         const isAdminGestor=(cu.perfil==='Administrativo'||cu.perfil==='Gestor');
-        const isUrgente=(novo.urgencia==='urgente');
-        if(isResp||( isAdminGestor&&isUrgente)){
-          showNotifBanner(`${novo.proto} — ${novo.titulo}`,t.id,isUrgente);
-        }
+        if(isResp||(isAdminGestor&&novo.urgencia==='urgente')){showNotifBanner(`${novo.proto} — ${novo.titulo}`,t.localId,novo.urgencia==='urgente');}
         renderTks();if(cu.perfil==='Gestor')renderDash();
       })
       .on('postgres_changes',{event:'UPDATE',schema:'public',table:'chamados'},payload=>{
         const upd=payload.new;if(!upd)return;
-        const idx=tickets.findIndex(x=>x.id===upd.id);
+        const idx=tickets.findIndex(x=>x.remoteId===upd.id);
         if(idx>=0){
-          tickets[idx].status=upd.status;
-          saveLS(LS_T,tickets);
-          // Notificar solicitante
-          if(tickets[idx].criadoPor===cu.email&&upd.status!==payload.old.status){
-            showNotifBanner(`${tickets[idx].proto}: status mudou para ${stLbl(upd.status)}`,upd.id,false);
-          }
+          tickets[idx].status=upd.status;idbSaveTicket(tickets[idx]);
+          if(tickets[idx].criadoPor===cu.email&&upd.status!==payload.old.status){showNotifBanner(`${tickets[idx].proto}: ${stLbl(upd.status)}`,tickets[idx].localId,false);}
           renderTks();if(cu.perfil==='Gestor')renderDash();
-          if(curTkId===upd.id)openDet(upd.id);
+          if(curTkId===tickets[idx].localId)openDet(tickets[idx].localId);
         }
       })
       .subscribe();
-  }catch(e){console.log('Realtime não disponível:',e);}
+  }catch(e){}
 }
 
-/* ═══ PWA + OFFLINE QUEUE ═══ */
-let deferredPrompt=null;
-const LS_Q='fru_offline_queue';
-if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('./sw.js', {scope: './'}).then(reg=>{
-    console.log('SW registrado scope:', reg.scope);
-    navigator.serviceWorker.addEventListener('message',e=>{if(e.data&&e.data.type==='SYNC_NOW')syncOfflineQueue();});
-  }).catch(e=>console.log('SW erro:',e));
+/* ═══ SERVICE WORKER ═══ */
+function initServiceWorker(){
+  if(!('serviceWorker' in navigator))return;
+  navigator.serviceWorker.register('./sw.js',{scope:'./'}).then(reg=>{
+    navigator.serviceWorker.addEventListener('message',e=>{
+      if(e.data?.type==='SYNC_NOW')syncEngine();
+    });
+  }).catch(()=>{});
 }
+
+/* ═══ PWA INSTALL ═══ */
+let deferredPrompt=null;
 window.addEventListener('beforeinstallprompt',e=>{
   e.preventDefault();deferredPrompt=e;
-  if(window.matchMedia('(display-mode: standalone)').matches)return;
-  document.getElementById('pwa-banner').classList.add('show');
+  if(!window.matchMedia('(display-mode: standalone)').matches)
+    document.getElementById('pwa-banner').classList.add('show');
 });
 function installPWA(){if(!deferredPrompt)return;deferredPrompt.prompt();deferredPrompt.userChoice.then(()=>{deferredPrompt=null;document.getElementById('pwa-banner').classList.remove('show');});}
-function getQueue(){try{return JSON.parse(localStorage.getItem(LS_Q)||'[]');}catch{return[];}}
-function saveQueue(q){localStorage.setItem(LS_Q,JSON.stringify(q));}
-function updateQueueIndicator(){
-  const q=getQueue();const el=document.getElementById('offline-queue');const txt=document.getElementById('offline-queue-txt');
-  if(!el)return;
-  if(q.length>0){el.style.display='flex';if(txt)txt.textContent=`${q.length} chamado${q.length>1?'s':''} aguardando`;}
-  else el.style.display='none';
-}
-async function manualSync(){
-  const btn=document.querySelector('#offline-queue button');
-  if(btn){btn.textContent='Sincronizando...';btn.disabled=true;}
-  try{
-    await syncOfflineQueue();
-    const{data:chamados}=await sb.from('chamados').select('*').order('criado_em',{ascending:false});
-    const{data:hist}=await sb.from('historico').select('*').order('feito_em',{ascending:true});
-    if(chamados){tickets=chamados.map(c=>mapChamado(c,hist||[]));if(tickets.length)seq=Math.max(seq,...tickets.map(t=>typeof t.id==='number'?t.id:0));saveLS(LS_T,tickets);}
-    const{data:usrs}=await sb.from('usuarios').select('*');
-    if(usrs){users=usrs.map(mapUser);saveLS(LS_U,users);}
-    setSbStatus(true);renderTks();if(cu&&cu.perfil==='Gestor')renderDash();showToast('Dados sincronizados!');
-  }catch(e){showToast('Sem internet ainda.');}
-  finally{if(btn){btn.textContent='Sincronizar';btn.disabled=false;}updateQueueIndicator();}
-}
-async function syncOfflineQueue(){
-  const q=getQueue();if(!q.length)return;
-  const remaining=[];
-  for(const item of q){
-    try{
-      if(item.type==='chamado'){
-        const{data}=await sb.from('chamados').insert([item.payload]).select().single();
-        if(data){await sb.from('historico').insert([{chamado_id:data.id,status:'aberto',obs:'Chamado aberto (offline)',feito_por:item.payload.criado_nome,feito_em:item.payload.criado_em}]);const tk=tickets.find(t=>t.proto===item.payload.proto);if(tk)tk.id=data.id;saveLS(LS_T,tickets);}
-      }else if(item.type==='status'){
-        await sb.from('chamados').update({status:item.payload.status}).eq('id',item.chamadoId);
-        await sb.from('historico').insert([item.payload]);
-      }
-      setSbStatus(true);
-    }catch(e){remaining.push(item);}
-  }
-  saveQueue(remaining);updateQueueIndicator();
-  if(remaining.length<q.length){showToast(`${q.length-remaining.length} item(ns) sincronizado(s)!`);renderTks();if(cu&&cu.perfil==='Gestor')renderDash();}
-}
-window.addEventListener('online',()=>{setSbStatus(false);setTimeout(manualSync,1500);});
+
+/* ═══ ONLINE/OFFLINE EVENTS ═══ */
+window.addEventListener('online',()=>{
+  setSbStatus(false);
+  setTimeout(()=>syncEngine().then(()=>mergeWithServer().then(()=>{renderTks();if(cu?.perfil==='Gestor')renderDash();})),1500);
+});
 window.addEventListener('offline',()=>setSbStatus(false));
-window.addEventListener('load',()=>{updateQueueIndicator();if(navigator.onLine)setTimeout(syncOfflineQueue,3000);});
+window.addEventListener('load',()=>{updateQueueIndicator();if(navigator.onLine)setTimeout(syncEngine,3000);});
 
 /* ═══ TOAST ═══ */
 let _tt;
@@ -1346,6 +1537,5 @@ function showToast(msg){const t=document.getElementById('toast');t.textContent=m
 /* ═══ AUTO LOGIN ═══ */
 if(cu){enterApp();}
 </script>
-
 </body>
 </html>
