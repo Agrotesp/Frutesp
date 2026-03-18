@@ -1,10 +1,11 @@
 <!DOCTYPE html>
+
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>FRUTESP — Chamados Operacionais</title>
-<link rel="manifest" href="manifest.json">
+<link rel="manifest" href="./manifest.json">
 <meta name="theme-color" content="#0a1d14">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -285,7 +286,8 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
         <select id="rst">
           <option>Campo</option><option>Irrigação</option><option>Mecânica</option>
           <option>Packing House</option><option>Almoxarifado</option>
-          <option value="Mel/Drone">Mel e Drone</option>
+          <option>Drone</option><option>Mel</option>
+          <option value="Mel/Drone">Mel e Drone (responsável pelos dois)</option>
           <option>Outro</option>
         </select></div>
       <button class="btn bp" onclick="doReg()" style="margin-top:6px">Criar Conta</button>
@@ -1282,9 +1284,10 @@ function initRealtime(){
 let deferredPrompt=null;
 const LS_Q='fru_offline_queue';
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('sw.js').then(()=>{
+  navigator.serviceWorker.register('./sw.js', {scope: './'}).then(reg=>{
+    console.log('SW registrado scope:', reg.scope);
     navigator.serviceWorker.addEventListener('message',e=>{if(e.data&&e.data.type==='SYNC_NOW')syncOfflineQueue();});
-  }).catch(()=>{});
+  }).catch(e=>console.log('SW erro:',e));
 }
 window.addEventListener('beforeinstallprompt',e=>{
   e.preventDefault();deferredPrompt=e;
@@ -1343,5 +1346,6 @@ function showToast(msg){const t=document.getElementById('toast');t.textContent=m
 /* ═══ AUTO LOGIN ═══ */
 if(cu){enterApp();}
 </script>
+
 </body>
 </html>
