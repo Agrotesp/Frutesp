@@ -1901,7 +1901,6 @@ window.addEventListener('load',()=>{updateQueueIndicator();if(navigator.onLine)s
 /* ═══ TOAST ═══ */
 let _tt;
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(_tt);_tt=setTimeout(()=>t.classList.remove('show'),3200);}
-
 /* ═══ AUTO LOGIN ═══ */
 if(cu){enterApp();}
 </script>
