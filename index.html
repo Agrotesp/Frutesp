@@ -399,6 +399,10 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
       <div class="dsec-t">Descrição</div>
       <p style="font-size:14px;color:var(--t2);line-height:1.65" id="d-desc"></p>
     </div>
+    <div class="dsec" id="d-desc-audio-sec" style="display:none">
+      <div class="dsec-t">🎙️ Áudio da Descrição</div>
+      <audio id="d-desc-audio" controls style="width:100%;height:40px;margin-top:4px"></audio>
+    </div>
     <div class="dsec" id="d-foto-sec" style="display:none">
       <div class="dsec-t">📷 Foto</div>
       <img id="d-foto-img" src="" alt="Foto do chamado">
@@ -483,8 +487,24 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
         <option value="servico_campo">📋 Serviço / Autorização de Campo</option>
         <option value="controle_campo">🌱 Controle de Campo</option>
       </select></div>
-    <div class="fg"><label>Descrição</label>
-      <textarea id="ndesc" placeholder="Descreva o problema ou necessidade..."></textarea></div>
+    <div class="fg">
+      <label>Descrição</label>
+      <textarea id="ndesc" placeholder="Descreva o problema ou necessidade..."></textarea>
+      <!-- Gravação de áudio na descrição -->
+      <div style="margin-top:8px">
+        <div id="desc-rec-status" style="display:none;text-align:center;padding:10px;margin-bottom:8px;background:var(--red-a);border:1px solid var(--red);border-radius:var(--rs)">
+          <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:4px">🔴 Gravando descrição...</div>
+          <div id="desc-rec-timer" style="font-size:22px;font-weight:800;color:var(--red);font-family:var(--fm)">0:00</div>
+          <div style="font-size:11px;color:var(--t4);margin-top:2px">Toque em ⏹ para parar</div>
+        </div>
+        <div id="desc-audio-preview-wrap" style="display:none;background:var(--g800);border:1px solid var(--b2);border-radius:var(--rs);padding:10px 12px;margin-bottom:6px">
+          <div style="font-size:11px;color:var(--t4);margin-bottom:6px;font-weight:700">🎙️ Áudio da descrição — ouça antes de salvar:</div>
+          <audio id="desc-audio-preview" controls style="width:100%;height:40px"></audio>
+          <button class="btn bg bsm" style="width:100%;margin-top:8px" onclick="cancelarAudioDesc()">✕ Remover áudio</button>
+        </div>
+        <button type="button" class="btn bg bsm" id="btn-gravar-desc" style="width:100%" onclick="toggleGravacaoDesc()">🎙️ Gravar descrição em áudio</button>
+      </div>
+    </div>
     <div class="fg">
       <label>Foto do problema</label>
       <div id="foto-pergunta" style="display:flex;gap:8px;margin-top:4px">
@@ -908,7 +928,7 @@ function mapChamado(c,historico){
     id:c.id, localId:String(c.id), remoteId:c.id,
     synced:true,
     proto:c.proto, titulo:c.titulo, setor:c.setor, tipo:c.tipo,
-    desc:c.descricao, status:c.status, urgencia:c.urgencia||'normal', foto:c.foto||null,
+    desc:c.descricao, status:c.status, urgencia:c.urgencia||'normal', foto:c.foto||null, descAudio:c.desc_audio||null,
     responsavel:c.responsavel, responsavelIds:c.responsavel_ids||[],
     criadoPor:c.criado_por_email, criadoNome:c.criado_nome,
     criadoEm:new Date(c.criado_em).getTime(),
@@ -1209,6 +1229,7 @@ async function submitTk(){
   const descVal=document.getElementById('ndesc').value.trim();
   const respNomes=resps.length?resps.map(r=>r.nome).join(', '):null;
   const fotoB64=getFotoBase64();
+  const descAudioUrl=await getDescAudioUrl();
   const nowISO=new Date().toISOString();
   seq++;
   const proto=`#FRU-${seq}`;
@@ -1216,9 +1237,9 @@ async function submitTk(){
 
   // 1. SALVAR LOCAL PRIMEIRO (sempre, independente de conexão)
   const t={
-    localId, remoteId:null, id:localId, // id provisório
+    localId, remoteId:null, id:localId,
     synced:false,
-    proto, titulo:tit, setor:set, tipo:tip, urgencia:urg, foto:fotoB64,
+    proto, titulo:tit, setor:set, tipo:tip, urgencia:urg, foto:fotoB64, descAudio:descAudioUrl,
     desc:descVal, responsavel:respNomes, responsavelIds:respIds,
     criadoPor:cu.email, criadoNome:cu.nome, criadoEm:Date.now(),
     status:'aberto',
@@ -1229,7 +1250,7 @@ async function submitTk(){
 
   // 2. ADICIONAR NA FILA DE SINCRONIZAÇÃO
   const sbPayload={
-    proto,titulo:tit,setor:set,tipo:tip,descricao:descVal,urgencia:urg,foto:fotoB64,
+    proto,titulo:tit,setor:set,tipo:tip,descricao:descVal,urgencia:urg,foto:fotoB64,desc_audio:descAudioUrl,
     status:'aberto',criado_por_email:cu.email,criado_nome:cu.nome,
     criado_em:nowISO,responsavel:respNomes,responsavel_ids:respIds
   };
@@ -1252,6 +1273,7 @@ async function submitTk(){
   document.getElementById('foto-preview').style.display='none';
   document.getElementById('foto-preview').src='';
   if(document.getElementById('nfoto'))document.getElementById('nfoto').value='';
+  cancelarAudioDesc();
   document.querySelectorAll('#nresp-list input[type=checkbox]').forEach(c=>c.checked=false);
 
   showToast(navigator.onLine?`Chamado ${proto} aberto!`:`Chamado ${proto} salvo! Será enviado ao conectar.`);
@@ -1287,6 +1309,15 @@ function openDet(localId){
   document.getElementById('d-desc').textContent=t.desc||'Sem descrição.';
   const fotoSec=document.getElementById('d-foto-sec');const fotoImg=document.getElementById('d-foto-img');
   if(t.foto){fotoSec.style.display='';fotoImg.src=t.foto;}else fotoSec.style.display='none';
+  // Áudio da descrição
+  const descAudioSec=document.getElementById('d-desc-audio-sec');
+  if(descAudioSec){
+    if(t.descAudio){
+      descAudioSec.style.display='';
+      const au=document.getElementById('d-desc-audio');
+      if(au){au.src=t.descAudio;au.load();}
+    }else descAudioSec.style.display='none';
+  }
   const tsec=document.getElementById('d-tempo-sec');
   const realH=(t.history||[]).filter(h=>h.status!=='chat');
   if(realH.length>1){
@@ -1339,7 +1370,116 @@ function renderAbar(t){
   else{bar.innerHTML=`<button class="btn bg" style="width:100%" onclick="closeDet()">← Voltar</button>`;}
 }
 
-/* ═══ GRAVAÇÃO DE ÁUDIO — CORRIGIDO ═══ */
+/* ═══ GRAVAÇÃO DE ÁUDIO — DESCRIÇÃO DO CHAMADO ═══ */
+let _descMediaRecorder=null;
+let _descAudioChunks=[];
+let _descAudioBlob=null;
+let _descRecStream=null;
+let _descRecInterval=null;
+let _descRecSeconds=0;
+let _descIsRecording=false;
+
+function toggleGravacaoDesc(){
+  if(_descIsRecording){pararGravacaoDesc();}else{iniciarGravacaoDesc();}
+}
+
+async function iniciarGravacaoDesc(){
+  if(_descIsRecording)return;
+  if(!navigator.mediaDevices?.getUserMedia){showToast('Navegador não suporta gravação.');return;}
+  try{
+    _descRecStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,sampleRate:44100}});
+    _descAudioChunks=[];_descAudioBlob=null;
+    const tipos=['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4','audio/mpeg'];
+    const mimeType=tipos.find(t=>{try{return MediaRecorder.isTypeSupported(t);}catch{return false;}})||'';
+    const opts=mimeType?{mimeType,audioBitsPerSecond:64000}:{audioBitsPerSecond:64000};
+    _descMediaRecorder=new MediaRecorder(_descRecStream,opts);
+    _descMediaRecorder.ondataavailable=ev=>{if(ev.data&&ev.data.size>0)_descAudioChunks.push(ev.data);};
+    _descMediaRecorder.onstop=()=>{
+      const tipo=_descMediaRecorder.mimeType||'audio/webm';
+      _descAudioBlob=new Blob(_descAudioChunks,{type:tipo});
+      if(_descAudioBlob.size<100){showToast('Áudio muito curto. Tente novamente.');resetGravacaoDesc();return;}
+      const url=URL.createObjectURL(_descAudioBlob);
+      const player=document.getElementById('desc-audio-preview');
+      if(player.src&&player.src.startsWith('blob:'))URL.revokeObjectURL(player.src);
+      player.src=url;player.load();
+      document.getElementById('desc-audio-preview-wrap').style.display='block';
+      document.getElementById('desc-rec-status').style.display='none';
+      const btn=document.getElementById('btn-gravar-desc');
+      if(btn){btn.style.background='';btn.style.color='';btn.textContent='🎙️ Gravar descrição em áudio';}
+      _descIsRecording=false;
+      showToast(`Áudio da descrição gravado (${_descRecSeconds}s)!`);
+    };
+    _descMediaRecorder.onerror=()=>{showToast('Erro na gravação.');resetGravacaoDesc();};
+    _descMediaRecorder.start(250);
+    _descIsRecording=true;
+    _descRecSeconds=0;
+    document.getElementById('desc-rec-timer').textContent='0:00';
+    document.getElementById('desc-rec-status').style.display='block';
+    document.getElementById('desc-audio-preview-wrap').style.display='none';
+    const btn=document.getElementById('btn-gravar-desc');
+    if(btn){btn.style.background='var(--red)';btn.style.color='#fff';btn.textContent='⏹ Parar gravação';}
+    _descRecInterval=setInterval(()=>{
+      _descRecSeconds++;
+      const m=Math.floor(_descRecSeconds/60);const s=_descRecSeconds%60;
+      document.getElementById('desc-rec-timer').textContent=`${m}:${String(s).padStart(2,'0')}`;
+      if(_descRecSeconds>=120){showToast('Limite de 2 minutos atingido.');pararGravacaoDesc();}
+    },1000);
+  }catch(err){
+    if(err.name==='NotAllowedError'){showToast('Permissão do microfone negada.');}
+    else{showToast('Erro ao acessar microfone.');}
+  }
+}
+
+function pararGravacaoDesc(){
+  if(!_descIsRecording||!_descMediaRecorder)return;
+  clearInterval(_descRecInterval);
+  if(_descMediaRecorder.state==='recording'){
+    _descMediaRecorder.requestData();
+    setTimeout(()=>{
+      if(_descMediaRecorder&&_descMediaRecorder.state!=='inactive')_descMediaRecorder.stop();
+      if(_descRecStream)_descRecStream.getTracks().forEach(t=>t.stop());
+    },300);
+  }
+}
+
+function resetGravacaoDesc(){
+  clearInterval(_descRecInterval);
+  _descIsRecording=false;_descAudioChunks=[];_descAudioBlob=null;_descRecSeconds=0;
+  if(_descRecStream)_descRecStream.getTracks().forEach(t=>t.stop());
+  document.getElementById('desc-rec-status').style.display='none';
+  document.getElementById('desc-rec-timer').textContent='0:00';
+  const btn=document.getElementById('btn-gravar-desc');
+  if(btn){btn.style.background='';btn.style.color='';btn.textContent='🎙️ Gravar descrição em áudio';}
+}
+
+function cancelarAudioDesc(){
+  const player=document.getElementById('desc-audio-preview');
+  if(player){player.pause();if(player.src.startsWith('blob:'))URL.revokeObjectURL(player.src);player.src='';}
+  document.getElementById('desc-audio-preview-wrap').style.display='none';
+  _descAudioBlob=null;_descAudioChunks=[];
+}
+
+async function getDescAudioUrl(){
+  if(!_descAudioBlob)return null;
+  const ext=_descAudioBlob.type.includes('ogg')?'ogg':_descAudioBlob.type.includes('mp4')?'mp4':'webm';
+  const fileName=`desc_audio_${Date.now()}_${Math.random().toString(36).slice(2,6)}.${ext}`;
+  try{
+    const{data,error}=await sb.storage.from('audios-chat')
+      .upload(fileName,_descAudioBlob,{contentType:_descAudioBlob.type,upsert:false});
+    if(error)throw error;
+    const{data:urlData}=sb.storage.from('audios-chat').getPublicUrl(fileName);
+    return urlData.publicUrl;
+  }catch(e){
+    // Fallback base64
+    return await new Promise(res=>{
+      const reader=new FileReader();
+      reader.onload=ev=>res(ev.target.result);
+      reader.readAsDataURL(_descAudioBlob);
+    });
+  }
+}
+
+/* ═══ GRAVAÇÃO DE ÁUDIO — CHAT ═══ */
 let _mediaRecorder=null;
 let _audioChunks=[];
 let _audioBlob=null;
