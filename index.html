@@ -229,6 +229,10 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
 .notif-dot{position:absolute;top:-3px;right:-3px;width:10px;height:10px;background:var(--red);border-radius:50%;border:2px solid var(--g950)}
 /* FOTO NO CHAMADO */
 #d-foto-sec img{width:100%;border-radius:var(--rs);margin-top:8px;max-height:280px;object-fit:cover}
+/* ÁUDIO NO CHAT */
+.chat-audio{width:100%;height:36px;margin-top:4px;filter:invert(0.8) sepia(1) saturate(3) hue-rotate(100deg);}
+.chat-audio-wrap{background:var(--g700);border-radius:var(--rs);padding:8px 10px;margin-top:4px}
+.chat-audio-lbl{font-size:10px;color:var(--t4);margin-bottom:4px}
 .chat-msg{padding:9px 13px;border-radius:12px;max-width:85%;font-size:13px;line-height:1.45}
 .chat-msg.mine{background:var(--g600);color:var(--t1);align-self:flex-end;border-bottom-right-radius:3px}
 .chat-msg.other{background:var(--g800);color:var(--t2);align-self:flex-start;border-bottom-left-radius:3px;border:1px solid var(--b2)}
@@ -410,10 +414,24 @@ body{font-family:var(--fb);background:var(--g900);color:var(--t1);
     <div class="dsec" id="d-chat-sec" style="display:none">
       <div class="dsec-t">💬 Chat — Contestação</div>
       <div id="d-chat-msgs" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;max-height:260px;overflow-y:auto;padding-right:4px"></div>
+      <!-- Preview de áudio antes de enviar -->
+      <div id="audio-preview-wrap" style="display:none;background:var(--g800);border:1px solid var(--b2);border-radius:var(--rs);padding:10px 12px;margin-bottom:8px">
+        <div style="font-size:11px;color:var(--t4);margin-bottom:6px;font-weight:700">🎙️ Prévia do áudio:</div>
+        <audio id="audio-preview" controls style="width:100%;height:36px"></audio>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn bp bsm" style="flex:2" onclick="enviarAudio()">📤 Enviar áudio</button>
+          <button class="btn bg bsm" style="flex:1" onclick="cancelarAudio()">✕ Cancelar</button>
+        </div>
+      </div>
       <textarea id="d-chat-txt" placeholder="Digite sua mensagem..." style="width:100%;background:var(--g900);border:1.5px solid var(--b2);border-radius:var(--rs);color:var(--t1);font-family:var(--fb);font-size:13px;padding:10px 12px;outline:none;resize:vertical;min-height:68px;margin-bottom:8px"></textarea>
-      <div style="display:flex;gap:8px">
-        <button class="btn bp" style="flex:2" onclick="sendChatMsg()">💬 Enviar</button>
-        <button class="btn bg" id="btn-alterar-decisao" style="flex:1;display:none" onclick="openAlterarDecisao()">🔄 Alterar</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn bp" style="flex:2;min-width:120px" onclick="sendChatMsg()">💬 Enviar texto</button>
+        <button class="btn bg" id="btn-gravar" style="flex:1;min-width:100px" onmousedown="iniciarGravacao()" onmouseup="pararGravacao()" ontouchstart="iniciarGravacao(event)" ontouchend="pararGravacao(event)">🎙️ Gravar</button>
+        <button class="btn bg" id="btn-alterar-decisao" style="flex:1;min-width:90px;display:none" onclick="openAlterarDecisao()">🔄 Alterar</button>
+      </div>
+      <!-- Status da gravação -->
+      <div id="rec-status" style="display:none;text-align:center;padding:8px;margin-top:6px;background:var(--red-a);border:1px solid var(--red);border-radius:var(--rs);font-size:12px;font-weight:700;color:var(--red)">
+        🔴 Gravando... solte para parar
       </div>
     </div>
   </div>
@@ -1288,8 +1306,27 @@ function closeDet(){document.getElementById('det-ov').classList.remove('open');c
 function renderChat(t){
   const msgs=(t.history||[]).filter(h=>h.status==='chat');
   const box=document.getElementById('d-chat-msgs');
-  if(!msgs.length){box.innerHTML=`<p style="font-size:12px;color:var(--t4);text-align:center;padding:12px 0">Nenhuma mensagem ainda.</p>`;return;}
-  box.innerHTML=msgs.map(h=>{const mine=h.by===cu.nome;return`<div style="display:flex;flex-direction:column;align-items:${mine?'flex-end':'flex-start'}"><div class="chat-msg ${mine?'mine':'other'}"><div class="chat-who">${mine?'Você':h.by}</div>${h.obs||''}<div class="chat-time">${fmtDT(h.ts)}</div></div></div>`;}).join('');
+  if(!msgs.length){
+    box.innerHTML=`<p style="font-size:12px;color:var(--t4);text-align:center;padding:12px 0">Nenhuma mensagem ainda.</p>`;return;
+  }
+  box.innerHTML=msgs.map(h=>{
+    const mine=h.by===cu.nome;
+    const isAudio=h.obs&&h.obs.startsWith('[AUDIO]:');
+    const audioUrl=isAudio?h.obs.replace('[AUDIO]:',''):'';
+    const conteudo=isAudio
+      ?`<div class="chat-audio-wrap">
+          <div class="chat-audio-lbl">🎙️ Mensagem de voz</div>
+          <audio class="chat-audio" controls src="${audioUrl}" preload="none"></audio>
+        </div>`
+      :(h.obs||'');
+    return`<div style="display:flex;flex-direction:column;align-items:${mine?'flex-end':'flex-start'}">
+      <div class="chat-msg ${mine?'mine':'other'}">
+        <div class="chat-who">${mine?'Você':h.by}</div>
+        ${conteudo}
+        <div class="chat-time">${fmtDT(h.ts)}</div>
+      </div>
+    </div>`;
+  }).join('');
   setTimeout(()=>{box.scrollTop=box.scrollHeight;},50);
 }
 function renderAbar(t){
@@ -1298,6 +1335,132 @@ function renderAbar(t){
   if(t.status==='negado'){bar.innerHTML=`<button class="btn bg" style="width:100%" onclick="closeDet()">← Voltar</button>`;return;}
   if(p==='Administrativo'||p==='Gestor'){bar.innerHTML=`<button class="btn bg" style="flex:1" onclick="closeDet()">← Voltar</button><button class="btn bp" style="flex:2" onclick="openStModal()">Atualizar Status →</button>`;}
   else{bar.innerHTML=`<button class="btn bg" style="width:100%" onclick="closeDet()">← Voltar</button>`;}
+}
+
+/* ═══ GRAVAÇÃO DE ÁUDIO ═══ */
+let _mediaRecorder=null;
+let _audioChunks=[];
+let _audioBlob=null;
+let _recStream=null;
+
+async function iniciarGravacao(e){
+  if(e)e.preventDefault();
+  // Verificar suporte
+  if(!navigator.mediaDevices?.getUserMedia){
+    showToast('Seu navegador não suporta gravação de áudio.');return;
+  }
+  try{
+    _recStream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    _audioChunks=[];
+    // Escolher formato suportado
+    const mimeType=['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4']
+      .find(t=>MediaRecorder.isTypeSupported(t))||'';
+    _mediaRecorder=new MediaRecorder(_recStream,mimeType?{mimeType}:{});
+    _mediaRecorder.ondataavailable=e=>{if(e.data.size>0)_audioChunks.push(e.data);};
+    _mediaRecorder.onstop=()=>{
+      _audioBlob=new Blob(_audioChunks,{type:_mediaRecorder.mimeType||'audio/webm'});
+      const url=URL.createObjectURL(_audioBlob);
+      document.getElementById('audio-preview').src=url;
+      document.getElementById('audio-preview-wrap').style.display='block';
+      document.getElementById('rec-status').style.display='none';
+      const btn=document.getElementById('btn-gravar');
+      if(btn){btn.style.background='';btn.textContent='🎙️ Gravar';}
+      // Parar stream
+      _recStream.getTracks().forEach(t=>t.stop());
+    };
+    _mediaRecorder.start(100);
+    document.getElementById('rec-status').style.display='block';
+    document.getElementById('audio-preview-wrap').style.display='none';
+    const btn=document.getElementById('btn-gravar');
+    if(btn){btn.style.background='var(--red)';btn.style.color='#fff';btn.textContent='⏹ Parar';}
+    showToast('Gravando... solte para parar.');
+  }catch(err){
+    if(err.name==='NotAllowedError'){showToast('Permissão de microfone negada.');}
+    else{showToast('Erro ao acessar microfone.');}
+    console.error('[AUDIO]',err);
+  }
+}
+
+function pararGravacao(e){
+  if(e)e.preventDefault();
+  if(_mediaRecorder&&_mediaRecorder.state!=='inactive'){
+    _mediaRecorder.stop();
+  }
+}
+
+function cancelarAudio(){
+  _audioBlob=null;_audioChunks=[];
+  const prev=document.getElementById('audio-preview');
+  if(prev)prev.src='';
+  document.getElementById('audio-preview-wrap').style.display='none';
+  const btn=document.getElementById('btn-gravar');
+  if(btn){btn.style.background='';btn.style.color='';btn.textContent='🎙️ Gravar';}
+}
+
+async function enviarAudio(){
+  if(!_audioBlob){showToast('Nenhum áudio gravado.');return;}
+  const t=tickets.find(x=>x.localId===curTkId);if(!t)return;
+
+  // Verificar tamanho (max 5MB)
+  if(_audioBlob.size>5*1024*1024){
+    showToast('Áudio muito longo! Máximo 60 segundos.');cancelarAudio();return;
+  }
+
+  const btn=document.querySelector('#audio-preview-wrap .btn.bp');
+  if(btn){btn.textContent='Enviando...';btn.disabled=true;}
+
+  const nowISO=new Date().toISOString();
+  const fileName=`audio_${t.id}_${Date.now()}.webm`;
+  let audioUrl=null;
+
+  try{
+    // Upload no Supabase Storage
+    const{data,error}=await sb.storage
+      .from('audios-chat')
+      .upload(fileName,_audioBlob,{
+        contentType:_audioBlob.type||'audio/webm',
+        upsert:false
+      });
+    if(error)throw error;
+    // URL pública
+    const{data:urlData}=sb.storage.from('audios-chat').getPublicUrl(fileName);
+    audioUrl=urlData.publicUrl;
+    setSbStatus(true);
+  }catch(err){
+    // Fallback: salvar como base64 se upload falhar
+    console.warn('[AUDIO] Upload falhou, usando base64:',err);
+    audioUrl=await new Promise(res=>{
+      const reader=new FileReader();
+      reader.onload=e=>res(e.target.result);
+      reader.readAsDataURL(_audioBlob);
+    });
+  }
+
+  const obsAudio=`[AUDIO]:${audioUrl}`;
+  const entry={status:'chat',ts:Date.now(),by:cu.nome,obs:obsAudio};
+  t.history.push(entry);
+  await idbSaveTicket(t);
+
+  // Salvar no historico do Supabase
+  if(t.remoteId&&navigator.onLine){
+    try{
+      await sb.from('historico').insert([{
+        chamado_id:t.remoteId,status:'chat',
+        obs:obsAudio,feito_por:cu.nome,feito_em:nowISO
+      }]);
+    }catch(e){
+      await queueAdd({type:'CHAT',localId:t.localId,remoteId:t.remoteId,
+        payload:{obs:obsAudio,feito_por:cu.nome,feito_em:nowISO}});
+    }
+  }else if(t.remoteId){
+    await queueAdd({type:'CHAT',localId:t.localId,remoteId:t.remoteId,
+      payload:{obs:obsAudio,feito_por:cu.nome,feito_em:nowISO}});
+  }
+
+  cancelarAudio();
+  renderChat(t);
+  showToast('Áudio enviado!');
+  if(btn){btn.textContent='📤 Enviar áudio';btn.disabled=false;}
 }
 
 /* ═══ CHAT ═══ */
